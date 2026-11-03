@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('hundun', {
     tree: () => ipcRenderer.invoke('life:tree'),
     read: (rel) => ipcRenderer.invoke('life:read', rel),
     write: (rel, content) => ipcRenderer.invoke('life:write', { rel, content }),
-    open: () => ipcRenderer.invoke('life:open')
+    open: () => ipcRenderer.invoke('life:open'),
+    search: (q, limit) => ipcRenderer.invoke('life:search', { q, limit }),
+    reindex: () => ipcRenderer.invoke('life:reindex')
   },
 
   chat: {

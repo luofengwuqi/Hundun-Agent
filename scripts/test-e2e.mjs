@@ -14,11 +14,44 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import esbuild from 'esbuild'
 import { createRequire } from 'node:module'
+import { spawn } from 'node:child_process'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
 const DEV = path.join(ROOT, '.dev')
 const TMP = path.join(DEV, 'e2e')
+const PORT = 8787
+
+/* ---------- 自己拉起假模型服务（不依赖外部先启动） ---------- */
+
+const mock = spawn('/usr/bin/python3', [path.join(ROOT, 'scripts/mock-llm.py'), String(PORT)], {
+  stdio: ['ignore', 'pipe', 'pipe']
+})
+mock.stdout.on('data', () => {})
+mock.stderr.on('data', (d) => process.stderr.write('[mock] ' + d))
+
+let up = false
+for (let i = 0; i < 40 && !up; i++) {
+  await new Promise((r) => setTimeout(r, 120))
+  up = await new Promise((resolve) => {
+    const http = require('node:http')
+    const req = http.request(
+      { host: '127.0.0.1', port: PORT, path: '/v1/chat/completions', method: 'POST' },
+      (res) => {
+        res.resume()
+        resolve(true)
+      }
+    )
+    req.on('error', () => resolve(false))
+    req.setHeader('Content-Type', 'application/json')
+    req.end(JSON.stringify({ messages: [{ role: 'user', content: 'ping' }] }))
+  })
+}
+if (!up) {
+  console.error('假模型服务没起来，端口 ' + PORT)
+  mock.kill()
+  process.exit(1)
+}
 
 let pass = 0
 let fail = 0
@@ -158,4 +191,5 @@ ok(state.history.length === 2, '历史里是一问一答两轮', '实际 ' + sta
 ok(state.history[1].role === 'assistant', '第二轮是 assistant')
 
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
+mock.kill()
 process.exit(fail === 0 ? 0 : 1)

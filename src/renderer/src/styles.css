@@ -138,6 +138,16 @@ body {
   color: var(--accent);
   border-color: #eccfcb;
 }
+/* 纯图标按钮：只留图标，不占文字宽度 */
+.tbtn.icon {
+  padding: 0;
+  width: 28px;
+  justify-content: center;
+  color: var(--ink-3);
+}
+.tbtn.icon:hover {
+  color: var(--accent);
+}
 .tbtn.win:hover {
   background: #efdfbc;
 }
@@ -165,7 +175,9 @@ body {
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 26px 32px 10px;
+  /* 砍掉右侧面板后正文会拉满整窗，行长过长不好读。
+     这里把对话列限制在与输入框同宽（660px）并居中，两边留白自适应。 */
+  padding: 26px max(32px, calc((100% - 660px) / 2)) 10px;
   scroll-behavior: smooth;
   user-select: text;
 }
@@ -491,6 +503,61 @@ textarea::placeholder {
   flex: 0 0 auto;
 }
 
+.searchbox {
+  padding: 8px 10px 6px;
+}
+.searchbox input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  padding: 0 9px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--ink);
+  outline: none;
+}
+.searchbox input:focus {
+  border-color: #d6b98a;
+}
+
+.hits {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 10px 12px;
+}
+.hit-empty {
+  color: var(--ink-3);
+  font-size: 12px;
+  padding: 10px 4px;
+}
+.hit {
+  padding: 7px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hit:hover {
+  background: #f6ecd2;
+}
+.hit-day {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.hit-text {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .editor-wrap {
   flex: 1;
   display: flex;
@@ -679,4 +746,218 @@ textarea::placeholder {
 }
 .status.bad {
   color: #a13a2f;
+}
+
+/* ---------------- 左侧边栏（D046） ----------------
+   只装功能入口（对话 / 打扰 / 设置），不装任何文件查看——
+   记忆文件的树、渲染、编辑一律不进这里（X-08 死线）。
+   D037 砍的是「为了看记忆而开一栏」，不是「功能不许有地方放」。 */
+
+.rail {
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 0 10px;
+  background: var(--bg-deep);
+  border-right: 1px solid var(--line-soft);
+}
+
+.rail-item {
+  width: 52px;
+  padding: 8px 0 7px;
+  border: 0;
+  background: none;
+  border-radius: 9px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.rail-item svg {
+  display: block;
+}
+.rail-item:hover {
+  color: var(--ink-2);
+  background: rgba(255, 253, 246, 0.75);
+}
+.rail-item.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---------------- 打扰 ----------------
+   这个面板里没有一个数字是预设的：默认全空、总开关关闭（D047、§1.6 第六条）。
+   空不是「没配好」，空就是默认态。 */
+
+.quiet-col {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 36px max(32px, calc((100% - 560px) / 2)) 40px;
+}
+
+.q-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.q-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.q-state {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 1px 9px;
+}
+.q-state.on {
+  color: var(--accent);
+  border-color: #ebc4c0;
+  background: var(--accent-soft);
+}
+
+.q-lede {
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.9;
+  margin: 0 0 24px;
+}
+.q-lede b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.q-group {
+  border-top: 1px solid var(--line-soft);
+  padding: 15px 0 3px;
+}
+.q-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+}
+.q-label {
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.q-value {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.q-add {
+  border: 1px dashed var(--line);
+  background: none;
+  color: var(--ink-3);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: default;
+}
+.q-add:hover {
+  color: var(--ink-2);
+  border-color: #d6c39c;
+}
+/* 主进程还没有这组接口，按钮先禁用——不假装能点 */
+.q-add[disabled] {
+  opacity: 0.45;
+  border-style: solid;
+  cursor: default;
+}
+.q-add[disabled]:hover {
+  color: var(--ink-3);
+  border-color: var(--line);
+}
+.q-note {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.75;
+  margin: 7px 0 0;
+}
+
+
+/* 总开关关掉时，下面的参数行整体退后一位——不是隐藏，
+   因为「它现在不会来找你」这件事必须看得见，只是不能再改。 */
+.q-group.dim {
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+/* 总开关这一组要比别的组显眼一点：它是这页唯一真正决定「会不会」的东西 */
+.q-main {
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 14px 0;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.q-main .q-label {
+  font-size: 14px;
+}
+.q-main .q-note {
+  margin: 3px 0 0;
+}
+.q-main-text {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 开关 */
+.sw {
+  margin-left: auto;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: #f4ead4;
+  position: relative;
+  cursor: default;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
+}
+.sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(42, 33, 24, 0.18);
+  transition: left 0.16s ease;
+}
+.sw.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sw.on::after {
+  left: 18px;
+}
+.sw.sm {
+  transform: scale(0.92);
+  transform-origin: right center;
 }

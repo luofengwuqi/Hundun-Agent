@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>馄饨 · 界面样张</title>
+    <!-- 直接引用应用真实样式，样张和真实界面不会漂移 -->
+    <link rel="stylesheet" href="src/renderer/src/styles.css" />
+    <style>
+      html,
+      body {
+        overflow: auto;
+        height: auto;
+      }
+      .shell {
+        height: 100vh;
+      }
+      .banner {
+        position: fixed;
+        right: 14px;
+        bottom: 12px;
+        font-size: 11.5px;
+        color: var(--ink-3);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 4px 10px;
+        z-index: 9;
+      }
+      textarea,
+      .messages {
+        user-select: text;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="titlebar">
+        <div class="brand">
+          <span class="mark">馄</span>
+          <span>馄饨</span>
+          <small>记得你说过什么</small>
+        </div>
+        <div class="spacer"></div>
+        <button class="tbtn icon" title="用文件资源管理器打开记忆目录">
+          <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 7.6A1.6 1.6 0 0 1 4.6 6h3.9l1.9 2.1h7.9A1.6 1.6 0 0 1 20 9.7v7.7a1.6 1.6 0 0 1-1.7 1.6H4.6A1.6 1.6 0 0 1 3 17.4z" />
+          </svg>
+        </button>
+        <button class="tbtn win">—</button>
+        <button class="tbtn win close">✕</button>
+      </header>
+
+      <div class="body">
+        <!-- 左侧边栏：只装功能入口，不装任何文件查看 -->
+        <nav class="rail">
+          <button class="rail-item on" data-view="chat" title="对话">
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-3.4-.6L4 21l1.4-4A8.2 8.2 0 0 1 3.6 11 8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z" />
+            </svg>
+            <span>对话</span>
+          </button>
+          <button class="rail-item" data-view="quiet" title="打扰">
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+            <span>打扰</span>
+          </button>
+          <button class="rail-item" data-view="settings" title="设置">
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 9h16" />
+              <path d="M4 15h16" />
+              <circle cx="9" cy="9" r="2" />
+              <circle cx="15" cy="15" r="2" />
+            </svg>
+            <span>设置</span>
+          </button>
+        </nav>
+
+        <section class="chat-col" data-panel="chat">
+          <div class="messages">
+            <div class="divider">11 月 1 日 · 晚间复盘</div>
+
+            <div class="msg me">
+              <div class="content">
+                <div class="bubble">今天又没动那个重构，一整天都在回消息。</div>
+              </div>
+            </div>
+
+            <div class="msg">
+              <div class="avatar">馄</div>
+              <div class="content">
+                <p>这是第三天说这句话了。</p>
+                <p>
+                  11 月 1 日你说是「被会议冲掉了」，昨天说是「临时来了个线上问题」。我不太信这两件事连着三天都刚好发生。
+                  更可能是这件事本身没被排进任何时段——它永远排在「都处理完」之后，而那天不会来。
+                </p>
+                <p>明天把它放在上午第一个小时，别放晚上。你晚上确实效率高，但晚上你只会做有人催的事。</p>
+              </div>
+            </div>
+
+            <div class="msg me">
+              <div class="content">
+                <div class="bubble">…有道理。但我上午脑子不清楚。</div>
+              </div>
+            </div>
+
+            <div class="msg">
+              <div class="avatar">馄</div>
+              <div class="content">
+                <p>那就别写代码，先写清楚要改哪三个地方。你上周三就是这么干的，那次动了两个小时。</p>
+                <p>另外你昨天只睡了五个多小时，今天别硬撑到一点。十一点半关掉。</p>
+              </div>
+            </div>
+
+            <div class="divider">刚才 · 从旧日记里翻到的</div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-inner">
+              <textarea rows="1" placeholder="说点什么…">最近老是拖</textarea>
+              <button class="send">说</button>
+            </div>
+            <div class="hint">
+              <span>Enter 发送 · Shift+Enter 换行</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 打扰：默认关、参数全空。空不是没配好，空就是默认态 -->
+        <section class="quiet-col" data-panel="quiet" hidden>
+          <div class="q-head">
+            <span class="q-title">打扰</span>
+            <span class="q-state" id="qState">关</span>
+          </div>
+
+          <p class="q-lede">
+            它不会提醒你该干什么。<b>只在你和它约好了一件事之后，到那天问一句</b>。
+            那件事可以是正经的事，也可以只是昨天没说完的一句话。
+          </p>
+
+          <!-- 总开关：这页唯一真正决定「会不会」的东西 -->
+          <div class="q-main">
+            <div class="q-main-text">
+              <span class="q-label">让它来找我</span>
+              <p class="q-note">关着的时候，它一句话都不会主动说。对话照常。</p>
+            </div>
+            <button class="sw" id="swMain" aria-label="打扰总开关"></button>
+          </div>
+
+          <div class="q-group dim" data-needs-main>
+            <div class="q-row">
+              <span class="q-label">允许打扰的时间段</span>
+              <span class="q-value">还没设</span>
+              <button class="q-add">+ 添加</button>
+            </div>
+            <p class="q-note">不在这些时间里，它一句话都不说。可以有多个，比如午饭后和晚上睡前各一段。</p>
+          </div>
+
+          <div class="q-group dim" data-needs-main>
+            <div class="q-row">
+              <span class="q-label">每天最多打扰</span>
+              <span class="q-value">还没设</span>
+              <button class="q-add">+ 设置</button>
+            </div>
+            <p class="q-note">用完就没有了，不累积到第二天。设成 0 等于关掉。</p>
+          </div>
+
+          <div class="q-group dim" data-needs-main>
+            <div class="q-row">
+              <span class="q-label">今天别烦我</span>
+              <button class="sw" id="swQuiet" title="跳过今天"></button>
+            </div>
+            <p class="q-note">点了跳过今天剩下的全部，零点自动恢复——不用记着改回来。</p>
+          </div>
+
+          <div class="q-group">
+            <p class="q-note">
+              约定在对话里定，<b>它自己记，不会问你「要不要记着」</b>。记错了你当场说一句，它删掉，不辩解。<br />
+              问到就结案：办成了、没办成、没去，都算结束，不会追着问第二次。
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="banner">静态样张 · 用的是应用真实样式表</div>
+
+    <script>
+      // 样张里只切两个视图；「设置」在真机上是弹窗，这里不展开
+      const items = [...document.querySelectorAll('.rail-item')]
+      const panels = [...document.querySelectorAll('[data-panel]')]
+      items.forEach((b) => {
+        b.addEventListener('click', () => {
+          const v = b.dataset.view
+          if (v === 'settings') return
+          items.forEach((x) => x.classList.toggle('on', x === b))
+          panels.forEach((p) => {
+            p.hidden = p.dataset.panel !== v
+          })
+        })
+      })
+
+      // 打扰面板：总开关默认关（D047），下面的三行跟着退后
+      const swMain = document.getElementById('swMain')
+      const sw = document.getElementById('swQuiet')
+      const qState = document.getElementById('qState')
+      const needMain = [...document.querySelectorAll('[data-needs-main]')]
+      let mainOn = false
+      let todayOff = false
+
+      function paint() {
+        needMain.forEach((g) => g.classList.toggle('dim', !mainOn))
+        qState.classList.toggle('on', mainOn && !todayOff)
+        qState.textContent = !mainOn ? '关' : todayOff ? '今天静音' : '开'
+      }
+
+      swMain.addEventListener('click', () => {
+        mainOn = !mainOn
+        swMain.classList.toggle('on', mainOn)
+        paint()
+      })
+      sw.addEventListener('click', () => {
+        todayOff = !todayOff
+        sw.classList.toggle('on', todayOff)
+        paint()
+      })
+      paint()
+    </script>
+  </body>
+</html>

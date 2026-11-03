@@ -6,6 +6,7 @@ const store = require('./store')
 const life = require('./life')
 const conversation = require('./conversation')
 const llm = require('./llm')
+const search = require('./search')
 
 let mainWindow = null
 let tray = null
@@ -261,6 +262,18 @@ function registerIpc() {
   ipcMain.handle('life:read', (_e, rel) => life.readSafe(rel, 200000))
   ipcMain.handle('life:write', (_e, { rel, content }) => life.writeSafe(rel, content))
   ipcMain.handle('life:open', () => shell.openPath(life.lifeDir()))
+  ipcMain.handle('life:search', async (_e, { q, limit }) => {
+    try {
+      return { ok: true, hits: await search.search(q, limit || 20) }
+    } catch (e) {
+      return { ok: false, error: e.message, hits: [] }
+    }
+  })
+  ipcMain.handle('life:reindex', async () => ({
+    ok: true,
+    count: await search.rebuild(),
+    info: await search.info()
+  }))
 
   ipcMain.handle('chat:state', () => conversation.state())
   ipcMain.handle('chat:reset', () => {
@@ -320,6 +333,11 @@ if (!singleLock) {
     createWindow()
     buildTray()
     schedulerTimer = setInterval(tickScheduler, 20000)
+    // 启动时把索引对齐一次（索引是缓存，重建不影响任何记忆文件）
+    search
+      .rebuild()
+      .then((n) => console.log('[search] 索引就绪，' + n + ' 条'))
+      .catch((e) => console.warn('[search] 索引不可用，改用文件扫描：' + e.message))
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })

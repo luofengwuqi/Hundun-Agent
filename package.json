@@ -13,6 +13,7 @@
     "gen-icon": "python3 scripts/gen-icon.py"
   },
   "dependencies": {
+    "sql.js": "^1.13.0",
     "vue": "^3.4.0"
   },
   "devDependencies": {
@@ -36,7 +37,10 @@
     ],
     "asar": true,
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icons",
       "category": "Utility",
       "description": "Desktop companion with long-term memory",

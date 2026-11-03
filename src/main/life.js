@@ -120,12 +120,36 @@ const TPL_CHECKPOINTS = `# CHECKPOINTS.md — 检查点
 - 静音日（今天别烦我）完全不出现。
 `
 
+const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
+
+> 一条一行，三样东西：**什么事、到期日、结局**。
+> 这个文件是事实源：你手改的内容优先于它的判断（改完立即生效，不用通知它）。
+> 过期的会自己删，不用你清理。
+
+## 规矩
+
+- **只记「有日期 + 有具体事」的。** 「我最近想多写点代码」不是约定，因为没有日期。
+- **一条只问一次。** 问过就写进结局，永不重提，不汇总、不统计、不排名。
+- **没成也正常。** 结局是「没成」「没去」，跟「成了」一样，写完就结案。
+- **日期拿不准就写模糊的**（「月底前」「下周」），它会按模糊的回访，不会硬算成某一天。
+
+## 结局只有四种
+
+未问 / 成了 / 没成 / 没去
+
+## 约定
+
+| 什么事 | 到期日 | 结局 |
+| --- | --- | --- |
+`
+
 const SEEDS = {
   'SOUL.md': TPL_SOUL,
   'IDENTITY.md': TPL_IDENTITY,
   'USER.md': TPL_USER,
   'MEMORY.md': TPL_MEMORY,
-  'CHECKPOINTS.md': TPL_CHECKPOINTS
+  'CHECKPOINTS.md': TPL_CHECKPOINTS,
+  'COMMITMENTS.md': TPL_COMMITMENTS
 }
 
 function ensureLife() {
@@ -271,6 +295,15 @@ function buildSystemPrompt(opts = {}) {
   parts.push('=== MEMORY.md（长期记忆） ===\n' + readSafe('MEMORY.md', 8000))
   parts.push('=== 昨天 ' + yesterday + ' ===\n' + (readSafe('memory/' + yesterday + '.md', 3000) || '（没有记录）'))
   parts.push('=== 今天 ' + today + ' ===\n' + (readSafe('memory/' + today + '.md', 3000) || '（今天还没记录）'))
+
+  // 更早的日子不在上下文里，靠检索按本轮话题捞出来——这是「记得第一天」的机制
+  if (opts.recalled && opts.recalled.length) {
+    parts.push(
+      '=== 更早的相关记忆（按他这句话从旧日记里翻出来的） ===\n' +
+        opts.recalled.map((h) => '[' + (h.day || h.file) + '] ' + h.text).join('\n') +
+        '\n这些是过去真实记下的原话，可以直接引用（说「你' + (opts.recalled[0].day || '那天') + '说过」），但不要罗列。'
+    )
+  }
 
   if (summary) {
     parts.push('=== 本次对话此前的摘要（上下文曾压缩） ===\n' + summary)

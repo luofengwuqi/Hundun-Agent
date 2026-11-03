@@ -27,3 +27,13 @@ Thumbs.db
 # 本地数据（记忆、配置、用户文件）
 data/
 *.db
+
+# PRD 编辑前备份（临时）
+.bak/
+
+# 本地配置与凭据（永远不要入库）
+config.json
+*.key
+*.pem
+token*
+credentials*

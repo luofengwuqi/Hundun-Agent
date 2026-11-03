@@ -176,6 +176,65 @@ for (const r of refs) {
 }
 ok(!idxHtml.includes('<!--BUNDLE-->'), '占位符已被替换')
 
+/* ---------------- 6. 检索层 ---------------- */
+
+console.log('\n[6] 检索层：切词、索引、检索、SQL 语义')
+
+const search = require(path.join(ROOT, 'src/main/search.js'))
+const SQLS = require(path.join(ROOT, 'src/main/search-sql.js'))
+
+// 造几天的旧记录，其中一天必须能被「登录页」翻出来
+const older = life.dateStr(new Date(Date.now() - 12 * 86400000))
+const older2 = life.dateStr(new Date(Date.now() - 40 * 86400000))
+fs.mkdirSync(path.join(TMP, 'memory'), { recursive: true })
+fs.writeFileSync(
+  path.join(TMP, 'memory', older + '.md'),
+  '# ' + older + '\n\n- 主要做后端开发，晚上效率最高\n- 那天卡在登录页，token 过期\n'
+)
+fs.writeFileSync(
+  path.join(TMP, 'memory', older2 + '.md'),
+  '# ' + older2 + '\n\n- 说想把作息挪到早上，试了三天没成\n'
+)
+
+const terms = search.tokenize('主要做开发')
+ok(terms.includes('开发'), '中文按双字切词', terms.join('/'))
+ok(search.tokenize('debug the login flow').includes('login'), '英文按整词切', '')
+ok(search.tokenize('').length === 0, '空查询不切出词')
+
+const indexed = await search.rebuild()
+ok(indexed > 3, '索引重建有内容', '行数 ' + indexed)
+
+const info = await search.info()
+ok(info.kind === 'memory' || info.kind === 'sqlite', '检索后端可用：' + info.kind, info.error)
+
+const hit = await search.search('登录页')
+ok(hit.length >= 1, '搜到了旧记录', JSON.stringify(hit[0] || {}))
+ok(hit.some((h) => h.day === older), '命中正确的那一天', hit.map((h) => h.day).join(','))
+ok(hit.every((h) => h.text && h.file), '结果带来源文件与原文')
+
+const none = await search.search('量子色动力学')
+ok(none.length === 0, '搜不到时返回空数组')
+
+const recalledPrompt = life.buildSystemPrompt({
+  recalled: [{ day: older, file: 'memory/x.md', text: '那天卡在登录页' }]
+})
+ok(recalledPrompt.includes('更早的相关记忆'), '提示里注入「更早的相关记忆」')
+ok(recalledPrompt.includes('登录页'), '注入内容带着原话')
+
+// SQL 语义交给原生 sqlite3 验（本机 WASM 起不来，sql.js 分支跑不了）
+try {
+  const { execFileSync } = await import('node:child_process')
+  const out = execFileSync('/usr/bin/python3', [path.join(ROOT, 'scripts/test-sql.py')], {
+    input: JSON.stringify(SQLS),
+    encoding: 'utf8'
+  })
+  const okCount = (out.match(/✓/g) || []).length
+  const badCount = (out.match(/✗/g) || []).length
+  ok(badCount === 0 && okCount >= 8, 'SQL 语句语义正确（原生 sqlite3，' + okCount + ' 项）', out.trim().split('\n').slice(-3).join(' | '))
+} catch (e) {
+  ok(false, 'SQL 语义验证失败', (e.stdout || '') + (e.message || ''))
+}
+
 /* ---------------- 汇总 ---------------- */
 
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')

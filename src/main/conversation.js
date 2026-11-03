@@ -1,6 +1,7 @@
 const life = require('./life')
 const store = require('./store')
 const llm = require('./llm')
+const search = require('./search')
 const { parseBlocks, groupNotes } = require('./blocks')
 
 /**
@@ -35,7 +36,23 @@ function persistNotes(notes) {
   } catch (e) {
     written.push('写入失败: ' + e.message)
   }
+  if (written.length) search.rebuild().catch(() => {})
   return written
+}
+
+/**
+ * 从旧日记里捞和这句话相关的记忆。
+ * 昨天和今天的记录已经在 prompt 里了，不用重复捞。
+ */
+async function recall(text) {
+  try {
+    const today = life.dateStr()
+    const yesterday = life.dateStr(new Date(Date.now() - 86400000))
+    const hits = await search.search(text, 8)
+    return hits.filter((h) => h.day !== today && h.day !== yesterday).slice(0, 3)
+  } catch {
+    return []
+  }
 }
 
 function totalTokens() {
@@ -105,8 +122,11 @@ async function send(text, hooks = {}) {
     // internal = 检查点/开场白这类"它自己开口"的指令，只进本次请求，不进历史
     if (!hooks.internal) history.push({ role: 'user', content: text })
 
+    // 检查点/开场白这类内部指令不检索——它不是在问某件事
+    const recalled = hooks.internal ? [] : await recall(text)
+
     const messages = [
-      { role: 'system', content: life.buildSystemPrompt({ summary }) },
+      { role: 'system', content: life.buildSystemPrompt({ summary, recalled }) },
       ...history.slice(-48)
     ]
     if (hooks.internal) messages.push({ role: 'user', content: text })

@@ -61,11 +61,24 @@ async function buildMain() {
     platform: 'node',
     format: 'cjs',
     target: 'node18',
-    external: ['electron', 'better-sqlite3'],
+    external: ['electron'],
     outfile: path.join(OUT, 'main/index.js'),
     sourcemap: false,
     logLevel: 'warning'
   })
+
+  // sql.js 是 WASM，没法打进单文件里跑，必须把 wasm 和它的壳一起放到 out/main/vendor，
+  // 运行时用 fs 读 wasm 传进去（Electron 的 asar 内也能读）。
+  const dist = path.join(ROOT, 'node_modules/sql.js/dist')
+  const vendor = path.join(OUT, 'main/vendor')
+  if (fs.existsSync(path.join(dist, 'sql-wasm.js'))) {
+    fs.mkdirSync(vendor, { recursive: true })
+    fs.copyFileSync(path.join(dist, 'sql-wasm.js'), path.join(vendor, 'sql-wasm.js'))
+    fs.copyFileSync(path.join(dist, 'sql-wasm.wasm'), path.join(vendor, 'sql-wasm.wasm'))
+  } else {
+    // 没装 sql.js 也能构建，检索会自动退回文件扫描
+    console.warn('未找到 sql.js，检索将退回内存扫描模式')
+  }
 }
 
 async function buildPreload() {
