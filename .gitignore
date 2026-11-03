@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 构建产物
+out/
+dist/
+
+# 本地缓存
+.cache/
+*.log
+
+# 本地开发/测试脚手架
+.dev/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# 环境变量
+.env
+.env.local
+
+# 本地数据（记忆、配置、用户文件）
+data/
+*.db

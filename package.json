@@ -1,0 +1,53 @@
+{
+  "name": "hundunagent",
+  "version": "0.1.0",
+  "description": "HundunAgent - 有长期记忆的桌面伙伴",
+  "main": "out/main/index.js",
+  "author": "芜柒",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/build.mjs && electron .",
+    "build": "node scripts/build.mjs",
+    "start": "electron .",
+    "build:linux": "node scripts/build.mjs && electron-builder --linux AppImage deb --x64",
+    "gen-icon": "python3 scripts/gen-icon.py"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@esbuild/linux-x64": "^0.21.5",
+    "@rollup/rollup-linux-x64-gnu": "^4.67.4",
+    "@vue/compiler-sfc": "^3.4.0",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.9.1",
+    "esbuild": "^0.21.5"
+  },
+  "build": {
+    "appId": "com.hundun.agent",
+    "productName": "HundunAgent",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "!node_modules"
+    ],
+    "asar": true,
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icons",
+      "category": "Utility",
+      "description": "Desktop companion with long-term memory",
+      "maintainer": "hundun",
+      "executableName": "hundunagent"
+    },
+    "deb": {
+      "packageName": "hundunagent"
+    }
+  },
+  "allowScripts": {
+    "electron@28.3.3": true
+  }
+}
