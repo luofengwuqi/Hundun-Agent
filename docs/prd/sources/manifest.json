@@ -1,0 +1,51 @@
+{
+  "capture_date": "2026-11-03",
+  "updated": "2026-11-03",
+  "note": "中档执行：本文件只登记清单，不复制快照副本。快照本体已在 docs/对话记录/2026-11-03/ 下，只读不得编辑；sha256 用于证明引用的是这一版。",
+  "files": [
+    {
+      "source_id": "S01",
+      "original_path": "F:\\dailyApp\\communicate\\wechat\\data\\xwechat_files\\<微信ID>\\msg\\file\\2026-11\\馄饨Agent对话记录-2026-11-03.zip",
+      "snapshot": "docs/对话记录/2026-11-03/对话全文.md",
+      "sha256": "73b4ef91ce56f5598efaa82ec48b553679d465f3de446f972c5484db2422200f",
+      "size_bytes": 38167,
+      "received": "2026-11-03",
+      "role": "需求访谈实录（2026-11-03 15:46–21:08，74 轮）",
+      "authority": "混合效力，须逐段判断：用户本人发言段＝需求方直接表态，可作需求依据（用户即需求方、即决策人）；助手问答段中用户明确选定的选项＝采纳建议级确认；助手未获回应的推荐段落一律为建议，不得作依据。",
+      "content": "从「做一个了解我情况、指导工作休息的 agent」到落地为 Electron 桌面应用的完整设计过程，含三次方向反转与全部已定选项。"
+    },
+    {
+      "source_id": "S02",
+      "original_path": "F:\\dailyApp\\communicate\\wechat\\data\\xwechat_files\\<微信ID>\\msg\\file\\2026-11\\馄饨Agent对话记录-2026-11-03.zip",
+      "snapshot": "docs/对话记录/2026-11-03/完整过程.md",
+      "sha256": "63239c9b3aa31736f00c2a5595b5973fad735b77734edb54d133f564706f7e2a",
+      "size_bytes": 103383,
+      "received": "2026-11-03",
+      "role": "实现过程日志（工具调用与结果序列）",
+      "authority": "己方项目档案。不产生需求，只用于核实「当时实际做了什么、哪一步失败过」。可作实现证据，不可作需求依据。",
+      "content": "记录依赖安装、构建链路替换、SQLite 选型、测试与端到端验证的每一步，含多次环境失败。"
+    },
+    {
+      "source_id": "S03",
+      "original_path": "F:\\dailyApp\\communicate\\wechat\\data\\xwechat_files\\<微信ID>\\msg\\file\\2026-11\\馄饨Agent对话记录-2026-11-03.zip",
+      "snapshot": "docs/对话记录/2026-11-03/原始记录.jsonl",
+      "sha256": "d09d9aec94ef0feef09fe5c45eafcd67a9f60808e3bc3434941b0800703767d1",
+      "size_bytes": 3168737,
+      "received": "2026-11-03",
+      "role": "原始会话数据（810 条）",
+      "authority": "与 S01 同源。仅在与 S01 冲突时用于回查原话；S01 是清洗产物，可能是二手。",
+      "content": "原始会话导出，含系统注入与工具调用，用于追溯被清洗掉的内容。"
+    },
+    {
+      "source_id": "S04",
+      "original_path": "E:\\code2\\hundunAgent（工程根，39 个文件，不含 docs 与 node_modules）",
+      "snapshot": "工程根当前工作树（无独立快照，随开发变动）",
+      "sha256": null,
+      "size_bytes": null,
+      "received": "2026-11-03",
+      "role": "已实现代码",
+      "authority": "己方项目档案。只证明「已经这样实现了」，不证明「需求要求这样」。代码与需求不一致时，以决策台账为准，代码记为偏差。",
+      "content": "Electron 主进程（记忆层、会话引擎、检索层、模型客户端）+ Vue 3 渲染层 + 构建与测试脚本。"
+    }
+  ]
+}
