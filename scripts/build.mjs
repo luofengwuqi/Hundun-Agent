@@ -124,7 +124,13 @@ async function buildHtml() {
 async function main() {
   rmrf(OUT)
   fs.mkdirSync(path.join(OUT, 'renderer/assets'), { recursive: true })
-  await Promise.all([buildMain(), buildPreload(), buildRenderer()])
+  // 串行，不并发。三个 esbuild.build 挤在同一个 service 进程里并发运行时，
+  // 会在解析 @vue/runtime-core、@vue/shared 这类间接依赖上偶发
+  // 「Could not resolve」——单独跑或串行跑都不复现，属于并发下的解析缓存问题。
+  // 三步合计几百毫秒，串行的代价可以忽略，换来的是构建结果稳定。
+  await buildMain()
+  await buildPreload()
+  await buildRenderer()
   await buildHtml()
   console.log('构建完成 → out/')
 }

@@ -43,14 +43,18 @@ const { parseBlocks, groupNotes } = require(path.join(ROOT, 'src/main/blocks.js'
 
 life.ensureLife()
 
-for (const f of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'CHECKPOINTS.md']) {
-  ok(fs.existsSync(path.join(TMP, f)), '初始化生成 ' + f)
+// 记忆目录带着身份，不再是根的直下：users/<用户>/agents/<agent>/
+const LIFE = life.lifeDir()
+ok(LIFE === path.join(TMP, 'users', 'local', 'agents', 'hundun'), '记忆目录按身份分层', LIFE)
+
+for (const f of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'CHECKPOINTS.md', 'COMMITMENTS.md']) {
+  ok(fs.existsSync(path.join(LIFE, f)), '初始化生成 ' + f)
 }
-ok(fs.existsSync(path.join(TMP, 'memory')), '初始化生成 memory/ 目录')
-const todayFile = path.join(TMP, 'memory', life.dateStr() + '.md')
+ok(fs.existsSync(path.join(LIFE, 'memory')), '初始化生成 memory/ 目录')
+const todayFile = path.join(LIFE, 'memory', life.dateStr() + '.md')
 ok(fs.existsSync(todayFile), '生成今天的日记文件')
 
-const userSeed = fs.readFileSync(path.join(TMP, 'USER.md'), 'utf8')
+const userSeed = fs.readFileSync(path.join(LIFE, 'USER.md'), 'utf8')
 ok(userSeed.includes('待访谈'), 'USER.md 是空白档案（会触发访谈）')
 ok(life.isProfileEmpty(), '识别出档案为空')
 
@@ -61,6 +65,155 @@ ok(prompt.includes('记忆规则'), '提示里包含记忆规则')
 ok(prompt.includes('<longterm>'), '提示声明了 longterm 块')
 ok(prompt.includes('把 USER.md 填起来'), '档案为空时注入访谈指令')
 ok(prompt.includes(life.dateStr()), '提示里带上了今天日期')
+
+/* ---------------- 1b. 约定表 ---------------- */
+
+console.log('\n[1b] 约定表：四列、状态机、老文件迁移')
+
+const CTMP = path.join(ROOT, '.dev/test-commit')
+const cfile = () => path.join(life.lifeDir(), 'COMMITMENTS.md')
+const readC = () => fs.readFileSync(cfile(), 'utf8')
+
+fs.rmSync(CTMP, { recursive: true, force: true })
+fs.mkdirSync(CTMP, { recursive: true })
+process.env.HUNDUN_LIFE_DIR = CTMP
+life.ensureLife()
+
+ok(readC().includes('| 什么事 | 到期日 | 结局 | 消息 |'), '种子是四列表头')
+ok(life.listCommitments().length === 0, '新文件里没有约定')
+
+const added = life.addCommitment({ what: '跟客户谈细节', due: '后天' })
+ok(added.delivery === '未问' && added.outcome === '—', '新约定：消息未问、结局留空（还没答）')
+ok(readC().includes('| 跟客户谈细节 | 后天 | — | 未问 |'), '两列的值各写各的，没有合并成一格')
+
+let threw = false
+try {
+  life.addCommitment({ what: '我最近想多写点代码' })
+} catch {
+  threw = true
+}
+ok(threw, '没有日期的不是约定（F06-01）')
+
+life.updateCommitment(0, { delivery: '已送达' })
+ok(readC().includes('| 跟客户谈细节 | 后天 | — | 已送达 |'), '改消息列真的落盘，不是只改内存')
+ok(life.readCommitment(0).outcome === '—', '送达之后结局仍是空的——他没答过')
+
+threw = false
+try {
+  life.updateCommitment(0, { delivery: '待延后' })
+} catch {
+  threw = true
+}
+ok(threw, '拒绝 已送达 → 待延后（只往前走）')
+
+life.updateCommitment(0, { delivery: '已结案', outcome: '成了' })
+threw = false
+try {
+  life.updateCommitment(0, { delivery: '已送达' })
+} catch {
+  threw = true
+}
+ok(threw, '已结案是终态，改不回去')
+
+life.addCommitment({ what: '交稿', due: '下周三', pinned: true })
+const withPinned = life.listCommitments()
+ok(withPinned.length === 2 && withPinned[1].pinned === true, 'pinned 出现时单独占一格')
+ok(
+  withPinned[1].due === '下周三' && withPinned[1].delivery === '未问' && withPinned[0].delivery === '已结案',
+  'pinned 一出现，其余列没有错位（按表头名定位，不按下标）'
+)
+
+// 老的三列文件：读不改，写时补列
+fs.rmSync(CTMP, { recursive: true, force: true })
+fs.mkdirSync(path.dirname(cfile()), { recursive: true })
+fs.writeFileSync(cfile(), '| 什么事 | 到期日 | 结局 |\n| --- | --- | --- |\n| 学嵌入式 | 月底前 | 未问 |\n', 'utf8')
+const before = readC()
+const old = life.listCommitments()
+ok(before === readC(), '读老文件不动它')
+ok(old.length === 1 && old[0].delivery === '未问', '老文件缺消息列 → 按未问读（绝不默认成已送）')
+
+life.updateCommitment(0, { delivery: '待延后' })
+ok(readC().includes('| 消息 |'), '写的时候把缺的列补上')
+ok(readC().includes('待延后'), '补列那一次改动的值也真的写进去了')
+
+threw = false
+try {
+  life.updateCommitment(0, { delivery: '已送达' }, { expectWhat: '别的事' })
+} catch {
+  threw = true
+}
+ok(threw, '行位置对不上就报错，绝不改错行')
+
+ok(life.removeCommitment(0) === true && life.listCommitments().length === 0, '删一条')
+
+process.env.HUNDUN_LIFE_DIR = TMP
+
+/* ---------------- 1c. 身份：隔离、防穿越、老布局迁移 ---------------- */
+
+console.log('\n[1c] 身份：隔离、防穿越、老布局迁移')
+
+const paths = require(path.join(ROOT, 'src/main/paths.js'))
+const ITMP = path.join(ROOT, '.dev/test-identity')
+fs.rmSync(ITMP, { recursive: true, force: true })
+process.env.HUNDUN_LIFE_DIR = ITMP
+
+// 两个人各写一句，谁都不该看到对方的
+paths.setContext({ userId: '111', agentId: 'hundun' })
+life.ensureLife()
+life.appendJournal(['111 的私事'])
+const aDir = life.lifeDir()
+
+paths.setContext({ userId: '222', agentId: 'hundun' })
+life.ensureLife()
+const bDir = life.lifeDir()
+const bJournal = fs.readFileSync(path.join(bDir, 'memory', life.dateStr() + '.md'), 'utf8')
+
+ok(aDir !== bDir, '两个人的记忆目录不同')
+ok(!bJournal.includes('111 的私事'), '222 的日记里读不到 111 写的东西')
+ok(!bDir.startsWith(aDir), '一个人的目录不在另一个人下面')
+
+// 同一个人换 agent：记的东西也不共享（D062：完全不共享）
+paths.setContext({ userId: '111', agentId: 'another' })
+life.ensureLife()
+const otherAgentDir = life.lifeDir()
+const otherJournal = fs.readFileSync(path.join(otherAgentDir, 'memory', life.dateStr() + '.md'), 'utf8')
+ok(!otherJournal.includes('111 的私事'), '同一个人换个 agent，也读不到上一个 agent 记的')
+
+// 身份会进路径，必须挡住穿越
+let blocked = false
+try {
+  paths.setContext({ userId: '../etc' })
+} catch {
+  blocked = true
+}
+ok(blocked, '身份里带路径分隔符直接拒绝')
+ok(!String(paths.context().userId).includes('..'), '拒绝之后上下文没有被污染')
+
+// 老布局：*.md 直接摊在根上
+const LTMP = path.join(ROOT, '.dev/test-legacy')
+fs.rmSync(LTMP, { recursive: true, force: true })
+fs.mkdirSync(path.join(LTMP, 'memory'), { recursive: true })
+fs.mkdirSync(path.join(LTMP, '.index'), { recursive: true })
+fs.writeFileSync(path.join(LTMP, 'SOUL.md'), '# 老灵魂\n', 'utf8')
+fs.writeFileSync(path.join(LTMP, 'memory', '2026-01-01.md'), '- 老日记，不能丢\n', 'utf8')
+fs.writeFileSync(path.join(LTMP, '.index', 'memory.sqlite'), 'stale')
+
+process.env.HUNDUN_LIFE_DIR = LTMP
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+const migratedDir = life.lifeDir()
+
+ok(migratedDir === path.join(LTMP, 'users', 'local', 'agents', 'hundun'), '老布局被收进身份目录', migratedDir)
+ok(fs.existsSync(path.join(migratedDir, 'SOUL.md')), '老的人格文件跟着搬过去')
+ok(
+  fs.readFileSync(path.join(migratedDir, 'memory', '2026-01-01.md'), 'utf8').includes('老日记，不能丢'),
+  '老的日记没丢'
+)
+ok(!fs.existsSync(path.join(LTMP, 'SOUL.md')), '根上不再残留旧文件')
+ok(!fs.existsSync(path.join(LTMP, '.index')), '旧索引被扔掉（里面记的是旧路径）')
+
+process.env.HUNDUN_LIFE_DIR = TMP
+paths.setContext({ userId: 'local', agentId: 'hundun' })
 
 /* ---------------- 2. 块的解析与落盘 ---------------- */
 
@@ -85,12 +238,12 @@ const journal = fs.readFileSync(todayFile, 'utf8')
 ok(journal.includes('测试：今天卡在登录页'), '日记内容已落盘')
 
 life.appendLongterm(['连续三天周三下午效率低'])
-const mem = fs.readFileSync(path.join(TMP, 'MEMORY.md'), 'utf8')
+const mem = fs.readFileSync(path.join(LIFE, 'MEMORY.md'), 'utf8')
 ok(mem.includes('连续三天周三下午效率低'), '长期记忆已落盘')
 ok(mem.indexOf('连续三天') < mem.indexOf('## 进行中的事'), '长期记忆插在锚点之前，结构没被破坏')
 
 life.appendProfile(['做后端，主要写 Java'])
-const usr = fs.readFileSync(path.join(TMP, 'USER.md'), 'utf8')
+const usr = fs.readFileSync(path.join(LIFE, 'USER.md'), 'utf8')
 ok(usr.includes('做后端，主要写 Java'), '用户档案已落盘')
 ok(/## 访谈实录[\s\S]*### \d{4}-/.test(usr), '档案按日期分节记录')
 
@@ -186,13 +339,13 @@ const SQLS = require(path.join(ROOT, 'src/main/search-sql.js'))
 // 造几天的旧记录，其中一天必须能被「登录页」翻出来
 const older = life.dateStr(new Date(Date.now() - 12 * 86400000))
 const older2 = life.dateStr(new Date(Date.now() - 40 * 86400000))
-fs.mkdirSync(path.join(TMP, 'memory'), { recursive: true })
+fs.mkdirSync(path.join(LIFE, 'memory'), { recursive: true })
 fs.writeFileSync(
-  path.join(TMP, 'memory', older + '.md'),
+  path.join(LIFE, 'memory', older + '.md'),
   '# ' + older + '\n\n- 主要做后端开发，晚上效率最高\n- 那天卡在登录页，token 过期\n'
 )
 fs.writeFileSync(
-  path.join(TMP, 'memory', older2 + '.md'),
+  path.join(LIFE, 'memory', older2 + '.md'),
   '# ' + older2 + '\n\n- 说想把作息挪到早上，试了三天没成\n'
 )
 

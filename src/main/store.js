@@ -14,7 +14,10 @@ const DEFAULTS = {
     { id: 'evening', label: '晚间', time: '21:30', enabled: true }
   ],
   quietDate: '', // 等于今天日期时，当天所有检查点静音
-  windowBounds: null
+  windowBounds: null,
+  // 身份：登录做出来之前先给一个本地占位用户
+  currentUser: 'local',
+  currentAgent: 'hundun'
 }
 
 let cache = null

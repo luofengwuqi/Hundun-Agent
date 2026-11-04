@@ -37,3 +37,9 @@ config.json
 *.pem
 token*
 credentials*
+
+# 完整规格与决策记录（不上公开仓库，单独归档）
+docs/
+
+# 本地工作笔记
+.workbuddy/

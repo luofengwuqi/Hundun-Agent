@@ -7,6 +7,7 @@ const life = require('./life')
 const conversation = require('./conversation')
 const llm = require('./llm')
 const search = require('./search')
+const paths = require('./paths')
 
 let mainWindow = null
 let tray = null
@@ -328,6 +329,9 @@ if (!singleLock) {
   app.on('second-instance', showWindow)
 
   app.whenReady().then(() => {
+    // 身份必须在任何记忆读写之前设好，否则会读到默认用户头上
+    const cfg = store.read()
+    paths.setContext({ userId: cfg.currentUser, agentId: cfg.currentAgent })
     life.ensureLife()
     registerIpc()
     createWindow()
