@@ -14,9 +14,6 @@ contextBridge.exposeInMainWorld('hundun', {
   },
 
   life: {
-    tree: () => ipcRenderer.invoke('life:tree'),
-    read: (rel) => ipcRenderer.invoke('life:read', rel),
-    write: (rel, content) => ipcRenderer.invoke('life:write', { rel, content }),
     open: () => ipcRenderer.invoke('life:open'),
     search: (q, limit) => ipcRenderer.invoke('life:search', { q, limit }),
     reindex: () => ipcRenderer.invoke('life:reindex')
@@ -29,8 +26,13 @@ contextBridge.exposeInMainWorld('hundun', {
     onDelta: (cb) => ipcRenderer.on('chat:delta', (_e, d) => cb(d)),
     onDone: (cb) => ipcRenderer.on('chat:done', (_e, d) => cb(d)),
     onError: (cb) => ipcRenderer.on('chat:error', (_e, d) => cb(d)),
-    onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, d) => cb(d)),
-    onCheckpointStart: (cb) => ipcRenderer.on('checkpoint:start', (_e, d) => cb(d))
+    onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, d) => cb(d))
+  },
+
+  identity: {
+    current: () => ipcRenderer.invoke('identity:current'),
+    switch: (next) => ipcRenderer.invoke('identity:switch', next),
+    onChanged: (cb) => ipcRenderer.on('identity:changed', (_e, d) => cb(d))
   },
 
   quiet: {

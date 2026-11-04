@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 
 const props = defineProps({ cfg: { type: Object, required: true } })
 const emit = defineEmits(['save', 'close'])
@@ -9,8 +9,26 @@ const form = reactive({
   apiKey: props.cfg.apiKey || '',
   model: props.cfg.model || '',
   temperature: props.cfg.temperature ?? 0.7,
-  contextWindow: props.cfg.contextWindow || 32000,
-  checkpoints: (props.cfg.checkpoints || []).map((c) => ({ ...c }))
+  contextWindow: props.cfg.contextWindow || 32000
+})
+
+/**
+ * 显示的是**当前身份目录**，不是 ~/life 根（F11-02）。
+ * 根下是所有使用者的目录，嘴上说「这就是我的记忆」会让人以为一步能看到别人的档案。
+ */
+const lifeDir = ref('')
+const dirLabel = computed(() => {
+  const p = lifeDir.value
+  if (!p) return '当前身份目录'
+  const parts = p.split(/[\\/]/).filter(Boolean)
+  return '…/' + parts.slice(-4).join('/')
+})
+
+onMounted(async () => {
+  try {
+    const info = await window.hundun.info()
+    lifeDir.value = info.lifeDir || ''
+  } catch {}
 })
 
 const testing = ref(false)
@@ -42,8 +60,7 @@ function save() {
     apiKey: form.apiKey.trim(),
     model: form.model.trim(),
     temperature: Number(form.temperature) || 0.7,
-    contextWindow: Number(form.contextWindow) || 32000,
-    checkpoints: form.checkpoints
+    contextWindow: Number(form.contextWindow) || 32000
   })
 }
 
@@ -82,19 +99,9 @@ function openDir() {
       </div>
 
       <div class="field">
-        <label>检查点（它主动找你）</label>
-        <div v-for="cp in form.checkpoints" :key="cp.id" class="cp-row">
-          <input type="checkbox" v-model="cp.enabled" />
-          <span>{{ cp.label }}</span>
-          <input type="time" v-model="cp.time" />
-        </div>
-        <div class="tip">静音日（顶部「今天别烦我」）会跳过全部检查点</div>
-      </div>
-
-      <div class="field">
         <label>记忆目录</label>
         <div class="cp-row">
-          <span style="width: auto">~/life</span>
+          <span style="width: auto" :title="lifeDir">{{ dirLabel }}</span>
           <button class="mini" @click="openDir">打开</button>
         </div>
       </div>

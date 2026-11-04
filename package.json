@@ -11,15 +11,16 @@
     "start": "electron .",
     "preview:sync": "node scripts/sync-preview.mjs",
     "build:linux": "node scripts/build.mjs && electron-builder --linux AppImage deb --x64",
-    "gen-icon": "python3 scripts/gen-icon.py"
+    "gen-icon": "python3 scripts/gen-icon.py",
+    "build:win": "node scripts/build.mjs && electron-builder --win nsis --x64",
+    "check": "node scripts/check.mjs",
+    "check:gui": "node scripts/check.mjs --gui"
   },
   "dependencies": {
     "sql.js": "^1.13.0",
     "vue": "^3.4.0"
   },
   "devDependencies": {
-    "@esbuild/linux-x64": "^0.21.5",
-    "@rollup/rollup-linux-x64-gnu": "^4.67.4",
     "@vue/compiler-sfc": "^3.4.0",
     "electron": "^28.3.3",
     "electron-builder": "^24.9.1",
@@ -50,6 +51,17 @@
     },
     "deb": {
       "packageName": "hundunagent"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icons/256x256.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "馄饨 Agent"
     }
   },
   "allowScripts": {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, Notification, shell, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, Tray, Menu, shell, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -7,13 +7,12 @@ const life = require('./life')
 const conversation = require('./conversation')
 const llm = require('./llm')
 const search = require('./search')
-const paths = require('./paths')
+const identity = require('./identity')
+const session = require('./session')
 
 let mainWindow = null
 let tray = null
-let schedulerTimer = null
 let busy = false
-const firedKeys = new Set()
 
 const ROOT = path.join(__dirname, '..', '..')
 
@@ -148,92 +147,24 @@ function refreshTrayMenu() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 检查点调度                                                          */
+/* 主动开口（M2 重建）                                                  */
 /* ------------------------------------------------------------------ */
 
-function pad(n) {
-  return String(n).padStart(2, '0')
-}
-
-async function fireCheckpoint(cp) {
-  if (busy) return
-  if (store.isQuietToday()) return
-  if (!store.read().apiKey) return
-
-  busy = true
-  try {
-    showWindow()
-    const section = conversation.checkpointSection(cp.label)
-    const instruction =
-      '（这是「' + cp.label + '」检查点，由你主动开口，不是你收到的消息。）\n' +
-      '按下面的要求说：\n' +
-      section
-    if (mainWindow) mainWindow.webContents.send('checkpoint:start', { id: cp.id, label: cp.label })
-
-    const result = await conversation.send(instruction, {
-      internal: true,
-      onDelta: (d) => mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('chat:delta', d)
-    })
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('chat:done', { ...result, checkpoint: cp.id })
-    }
-
-    if (Notification.isSupported()) {
-      const body = result.text.replace(/\s+/g, ' ').slice(0, 90)
-      new Notification({ title: '馄饨 · ' + cp.label, body, icon: resolveIcon() || undefined }).show()
-    }
-  } catch (e) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('chat:error', { message: e.message })
-    }
-  } finally {
-    busy = false
-  }
-}
-
-function tickScheduler() {
-  const cfg = store.read()
-  if (!cfg.apiKey) return
-  if (store.isQuietToday()) return
-  const now = new Date()
-  const hm = pad(now.getHours()) + ':' + pad(now.getMinutes())
-  for (const cp of cfg.checkpoints || []) {
-    if (!cp.enabled || !cp.time) continue
-    const key = store.todayStr() + ':' + cp.id
-    if (firedKeys.has(key)) continue
-    if (hm === cp.time) {
-      firedKeys.add(key)
-      fireCheckpoint(cp)
-    }
-  }
-}
+/**
+ * 这里原来是一套「检查点」：每天固定钟点开口，配置里写着 08:30／21:30。
+ * 那套东西已作废（D039／D047／O11）——它开口的原因是「时间到了」，
+ * 而产品要的是「你有一句还没合上的话」。判据不同，代码不能复用。
+ *
+ * 整块（fireCheckpoint / tickScheduler / 20 秒轮询）已删除，留给 M2 的 P-10：
+ * 60 秒一次，判五条——有到期约定／有待延后／在允许时段内／今日未超限／今天没被作废。
+ *
+ * 空着不等于忘了：**光留一套永远不触发的旧调度，比删掉更糟**，
+ * 那种状态下它不报错、不崩，只是从此不再找你。
+ */
 
 /* ------------------------------------------------------------------ */
 /* IPC                                                                 */
 /* ------------------------------------------------------------------ */
-
-function fileTree() {
-  const root = life.lifeDir()
-  const out = []
-  const push = (rel, label) => {
-    try {
-      const st = fs.statSync(path.join(root, rel))
-      out.push({ rel, label, mtime: st.mtimeMs, size: st.size, dir: label === 'memory' })
-    } catch {}
-  }
-  for (const name of ['IDENTITY.md', 'SOUL.md', 'USER.md', 'MEMORY.md', 'CHECKPOINTS.md']) push(name, name)
-  let days = []
-  try {
-    days = fs
-      .readdirSync(path.join(root, 'memory'))
-      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-      .sort()
-      .reverse()
-  } catch {}
-  for (const f of days.slice(0, 40)) out.push({ rel: 'memory/' + f, label: f.replace('.md', ''), mtime: 0, size: 0, dir: true })
-  return out
-}
 
 function registerIpc() {
   ipcMain.handle('app:info', () => ({
@@ -259,9 +190,6 @@ function registerIpc() {
     }
   })
 
-  ipcMain.handle('life:tree', () => ({ root: life.lifeDir(), files: fileTree() }))
-  ipcMain.handle('life:read', (_e, rel) => life.readSafe(rel, 200000))
-  ipcMain.handle('life:write', (_e, { rel, content }) => life.writeSafe(rel, content))
   ipcMain.handle('life:open', () => shell.openPath(life.lifeDir()))
   ipcMain.handle('life:search', async (_e, { q, limit }) => {
     try {
@@ -290,6 +218,8 @@ function registerIpc() {
       internal = true
       content = '（开始对话。按你现在的认知主动说第一句；USER.md 是空的，就按访谈要求问第一个问题。）'
     }
+    // 这一轮属于哪个身份。切过身份之后回来，锁不能乱放（见 finally）
+    const myEpoch = session.current()
     busy = true
     try {
       const result = await conversation.send(content, {
@@ -299,12 +229,18 @@ function registerIpc() {
       })
       return result
     } catch (e) {
-      event.sender.send('chat:error', { message: e.message })
+      try {
+        event.sender.send('chat:error', { message: e.message })
+      } catch {}
       return { error: e.message }
     } finally {
-      busy = false
+      // 身份换过 = 这把锁现在属于下一个身份的请求，别在这里放开
+      if (!session.isStale(myEpoch)) busy = false
     }
   })
+
+  ipcMain.handle('identity:current', () => identity.current())
+  ipcMain.handle('identity:switch', (_e, next) => identity.switchTo(next || {}))
 
   ipcMain.handle('quiet:get', () => store.isQuietToday())
   ipcMain.handle('quiet:toggle', () => {
@@ -314,7 +250,13 @@ function registerIpc() {
   })
 
   ipcMain.on('win:minimize', () => mainWindow && mainWindow.minimize())
-  ipcMain.on('win:close', () => app.quit())
+  // D026：✕ 是收进托盘，不是退出。窗口藏起来进程还在，到期的约定才发得出来。
+  // 位置要在这里存一次——hide() 不触发 close 事件，只靠 close 里的保存会永远记不住。
+  ipcMain.on('win:close', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    store.write({ windowBounds: mainWindow.getBounds() })
+    mainWindow.hide()
+  })
   ipcMain.on('win:hide', () => mainWindow && mainWindow.hide())
 }
 
@@ -329,18 +271,26 @@ if (!singleLock) {
   app.on('second-instance', showWindow)
 
   app.whenReady().then(() => {
-    // 身份必须在任何记忆读写之前设好，否则会读到默认用户头上
+    // 身份必须在任何记忆读写之前设好，否则会读到默认用户头上。
+    // 走 identity.init 而不是直接 setContext：它顺手建好目录、复位会话、重建索引，
+    // 保证「启动」和「切换」两条路得到同一个状态（少一样就是静默串味）。
     const cfg = store.read()
-    paths.setContext({ userId: cfg.currentUser, agentId: cfg.currentAgent })
-    life.ensureLife()
+    identity.init({ userId: cfg.currentUser, agentId: cfg.currentAgent })
+
+    // 切换身份后主进程这边要跟着松手：忙碌锁属于上一个身份，不放会永久卡住输入
+    identity.onSwitch(() => {
+      busy = false
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('identity:changed', identity.current())
+      }
+    })
+
     registerIpc()
     createWindow()
     buildTray()
-    schedulerTimer = setInterval(tickScheduler, 20000)
-    // 启动时把索引对齐一次（索引是缓存，重建不影响任何记忆文件）
     search
-      .rebuild()
-      .then((n) => console.log('[search] 索引就绪，' + n + ' 条'))
+      .info()
+      .then((info) => console.log('[search] 索引就绪：' + (info.count || 0) + ' 条'))
       .catch((e) => console.warn('[search] 索引不可用，改用文件扫描：' + e.message))
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -348,7 +298,9 @@ if (!singleLock) {
   })
 
   app.on('window-all-closed', () => {
-    if (schedulerTimer) clearInterval(schedulerTimer)
-    app.quit()
+    // 不 quit：这是常驻托盘的应用（D026）。窗口关了进程得活着，
+    // 否则「它到了那天来问你」这件事根本不可能发生。
+    // 调度器也不清：清掉的话进程还活着、却永远不开口——不报错、不崩，
+    // 只表现为「它不再找我」。真退出只有一条路：托盘菜单里的「退出」。
   })
 }

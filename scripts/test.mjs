@@ -47,7 +47,7 @@ life.ensureLife()
 const LIFE = life.lifeDir()
 ok(LIFE === path.join(TMP, 'users', 'local', 'agents', 'hundun'), '记忆目录按身份分层', LIFE)
 
-for (const f of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'CHECKPOINTS.md', 'COMMITMENTS.md']) {
+for (const f of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'COMMITMENTS.md']) {
   ok(fs.existsSync(path.join(LIFE, f)), '初始化生成 ' + f)
 }
 ok(fs.existsSync(path.join(LIFE, 'memory')), '初始化生成 memory/ 目录')
@@ -249,15 +249,83 @@ ok(/## 访谈实录[\s\S]*### \d{4}-/.test(usr), '档案按日期分节记录')
 
 ok(!life.isProfileEmpty(), '档案写入后不再判定为空')
 
-/* ---------------- 3. 检查点 ---------------- */
+/* ---------------- 3. 会话复位与串味防线（F13-06 / P-25） ---------------- */
 
-console.log('\n[3] 检查点文案')
-const morning = life.checkpointSection('早间')
-const evening = life.checkpointSection('晚间')
-ok(morning.includes('最重要的一件事'), '早间文案能取出', morning.slice(0, 30))
-ok(evening.includes('一句话'), '晚间文案能取出', evening.slice(0, 30))
-ok(!morning.includes('晚间'), '两节不会串')
-ok(life.checkpointSection('不存在').length > 0, '缺失时回退到默认文案')
+console.log('\n[3] 会话复位：切身份之后旧回复不得落进新身份')
+
+// store 要读配置：给一个临时配置目录，别碰真的 ~/.config
+process.env.HUNDUN_CONFIG_DIR = path.join(TMP, 'config')
+
+const session = require(path.join(ROOT, 'src/main/session.js'))
+const store = require(path.join(ROOT, 'src/main/store.js'))
+const llm = require(path.join(ROOT, 'src/main/llm.js'))
+const searchMod = require(path.join(ROOT, 'src/main/search.js'))
+const conversation = require(path.join(ROOT, 'src/main/conversation.js'))
+
+const e0 = session.current()
+session.bump()
+ok(session.isStale(e0), '代次推进后，出发时的代次被判定为过期')
+ok(!session.isStale(session.current()), '当前代次不算过期')
+
+// 会话级复位：三样都清
+conversation.resetSession()
+const st0 = conversation.state()
+ok(st0.history.length === 0 && st0.summary === '' && st0.busy === false, 'resetSession 清空 history / summary / busy')
+
+// 造一次「请求还在飞的时候被切了身份」
+store.write({ apiKey: 'test-key', baseUrl: 'http://127.0.0.1:1/v1', model: 'test' })
+const realStream = llm.streamChat
+const realSearch = searchMod.search
+llm.streamChat = async (opts, onDelta) => {
+  await new Promise((r) => setTimeout(r, 40))
+  const text = '<memory>紫色犀牛</memory>这句话属于上一个人。'
+  onDelta && onDelta(text)
+  return text
+}
+searchMod.search = async () => []
+
+paths.setContext({ userId: '111', agentId: 'hundun' })
+life.ensureLife()
+const dirA = life.lifeDir()
+const pending = conversation.send('我是上一个人')
+
+// 请求在飞的时候切走
+paths.setContext({ userId: '222', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
+const dirB = life.lifeDir()
+
+const res = await pending
+
+ok(res && res.dropped === true, '切身份后旧请求被丢弃（返回 dropped）', JSON.stringify(res))
+ok(conversation.state().history.length === 0, '被丢弃的回复没有进新身份的历史')
+
+// 最要紧的一条：那句话绝不能出现在 B 的记忆里
+const memB = fs.existsSync(path.join(dirB, 'memory', life.dateStr() + '.md'))
+  ? fs.readFileSync(path.join(dirB, 'memory', life.dateStr() + '.md'), 'utf8')
+  : ''
+ok(!memB.includes('紫色犀牛'), '旧身份的回复没有写进新身份的记忆文件', memB.slice(-120))
+ok(dirA !== dirB, '两个身份的目录确实不同', dirA + ' / ' + dirB)
+
+// 正常路径不受影响：没切身份时，记忆照常落盘
+life.ensureLife()
+const p2 = await conversation.send('我是当前这个人')
+ok(p2 && !p2.dropped && p2.text.length > 0, '没有切换时请求正常完成')
+const memNow = fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+ok(memNow.includes('紫色犀牛'), '没有切换时记忆照常写入')
+
+llm.streamChat = realStream
+searchMod.search = realSearch
+
+// 收尾：切回本节开始时的身份，否则后面检索那节会在 222 的目录里找 111 的东西
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
+
+// 收尾：切回本节开始时的身份，否则后面检索那节会在 222 的目录里找 111 的东西
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
 
 /* ---------------- 4. 界面 SSR ---------------- */
 

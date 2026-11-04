@@ -2,6 +2,7 @@ const life = require('./life')
 const store = require('./store')
 const llm = require('./llm')
 const search = require('./search')
+const session = require('./session')
 const { parseBlocks, groupNotes } = require('./blocks')
 
 /**
@@ -9,6 +10,10 @@ const { parseBlocks, groupNotes } = require('./blocks')
  *
  * 设计要点：历史存在主进程，渲染进程只是视图。
  * 因为"压缩前先落盘记忆"必须能看到完整历史，放在渲染层会拿不到。
+ *
+ * 注意：这里的 history / summary / busy 是**进程级单值**，不分身份。
+ * 切换身份时必须调 resetSession()（清空 + 代次 +1），
+ * 否则两个身份的对话会接在一起（F13-06）。
  */
 
 const KEEP_AFTER_COMPACT = 6
@@ -17,9 +22,21 @@ let history = []
 let summary = ''
 let busy = false
 
+/** 手动清空当前身份的会话（不动代次：身份没变） */
 function reset() {
   history = []
   summary = ''
+}
+
+/**
+ * 切身份时调这个。三样都要清，并且把代次推一格——
+ * 已经在飞的请求回来时会发现代次变了，于是整个丢弃（见 session.js）。
+ */
+function resetSession() {
+  history = []
+  summary = ''
+  busy = false
+  session.bump()
 }
 
 function state() {
@@ -66,7 +83,7 @@ function totalTokens() {
  * 上下文接近上限时：先静默让模型把该记的记下来，再压缩历史。
  * 这是 OpenClaw 的 memoryFlush，在 Electron 里能真正实现（WorkBuddy 里做不到）。
  */
-async function maybeCompact() {
+async function maybeCompact(myEpoch) {
   const cfg = store.read()
   const limit = Math.floor((cfg.contextWindow || 32000) * 0.6)
   const used = totalTokens()
@@ -95,6 +112,8 @@ async function maybeCompact() {
   })
 
   const { clean, notes } = parseBlocks(text)
+  // 压缩期间可能被切了身份：这份摘要和这批记忆属于旧身份，不能落到新身份头上
+  if (session.isStale(myEpoch)) return null
   persistNotes(notes)
   const body = clean.replace(/^摘要[:：]\s*/, '').trim()
   summary = (summary ? summary + '\n' : '') + body
@@ -105,8 +124,8 @@ async function maybeCompact() {
 
 /**
  * 跑一轮对话。
- * @param {string} text 用户输入（或检查点的内部指令）
- * @param {object} hooks { onDelta, onCompact }
+ * @param {string} text 用户输入（或"它自己开口"的内部指令）
+ * @param {object} hooks { onDelta, onCompact, internal }
  */
 async function send(text, hooks = {}) {
   const cfg = store.read()
@@ -114,16 +133,21 @@ async function send(text, hooks = {}) {
     throw new Error('还没有填 API Key。点右上角设置，填上再聊。')
   }
 
+  // 出发时的身份。这一轮结束前若身份变了，结果一律丢弃——
+  // 不 push 历史、不写记忆、不回显（F13-06）。
+  const myEpoch = session.current()
   busy = true
   try {
-    const compacted = await maybeCompact()
+    const compacted = await maybeCompact(myEpoch)
+    if (session.isStale(myEpoch)) return { dropped: true, text: '' }
     if (compacted && hooks.onCompact) hooks.onCompact(compacted)
 
-    // internal = 检查点/开场白这类"它自己开口"的指令，只进本次请求，不进历史
+    // internal = 开场白这类"它自己开口"的指令，只进本次请求，不进历史
     if (!hooks.internal) history.push({ role: 'user', content: text })
 
-    // 检查点/开场白这类内部指令不检索——它不是在问某件事
+    // 内部指令不检索——它不是在问某件事
     const recalled = hooks.internal ? [] : await recall(text)
+    if (session.isStale(myEpoch)) return { dropped: true, text: '' }
 
     const messages = [
       { role: 'system', content: life.buildSystemPrompt({ summary, recalled }) },
@@ -142,12 +166,18 @@ async function send(text, hooks = {}) {
       },
       (d) => {
         acc += d
-        hooks.onDelta && hooks.onDelta(d)
+        // 身份变了就别再往界面上推字：那些字属于上一个身份
+        if (!session.isStale(myEpoch)) hooks.onDelta && hooks.onDelta(d)
       }
     )
 
     const raw = streamed || acc
     const { clean, notes } = parseBlocks(raw)
+
+    // 落盘之前再问一次。这一句是整个 P-25 的核心：
+    // 少了它，上一个身份的话会写进现在的 MEMORY.md，而且永远发现不了。
+    if (session.isStale(myEpoch)) return { dropped: true, text: '' }
+
     const written = persistNotes(notes)
     const finalText = clean || '（这一轮我只记了点东西，没别的话。）'
 
@@ -156,8 +186,10 @@ async function send(text, hooks = {}) {
 
     return { text: finalText, raw, notes: notes.length, written }
   } finally {
-    busy = false
+    // 只清自己那一代的锁。身份已经换过的话，这把锁现在属于下一个请求，
+    // 在这里清掉会让两个请求同时跑（同一个「不报错只是行为错」的坑）。
+    if (!session.isStale(myEpoch)) busy = false
   }
 }
 
-module.exports = { send, reset, state, parseBlocks, persistNotes, checkpointSection: life.checkpointSection }
+module.exports = { send, reset, resetSession, state, parseBlocks, persistNotes }

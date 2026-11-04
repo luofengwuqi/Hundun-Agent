@@ -17,7 +17,6 @@ const disturbOn = ref(false)
 /** D046：左栏只切视图（chat / quiet）。设置仍是弹窗，入口在左栏 */
 const view = ref('chat')
 const cfg = ref(null)
-const tree = ref({ files: [] })
 const notice = ref('')
 const noticeBad = ref(false)
 const scroller = ref(null)
@@ -70,11 +69,6 @@ function finalize(text) {
 
 /* ---------- 交互 ---------- */
 
-async function refreshTree() {
-  const t = await window.hundun.life.tree()
-  tree.value = t
-}
-
 function resize() {
   const el = inputEl.value
   if (!el) return
@@ -106,7 +100,6 @@ async function send(text) {
       noticeBad.value = true
     } else if (res && res.text) {
       finalize(res.text)
-      if (res.notes) await refreshTree()
     } else {
       finalize(messages.value[liveIdx.value]?.content || '')
     }
@@ -163,7 +156,6 @@ async function opening() {
     finalize('')
   } finally {
     streaming.value = false
-    await refreshTree()
   }
 }
 
@@ -174,7 +166,6 @@ let offs = []
 onMounted(async () => {
   cfg.value = await window.hundun.cfg.get()
   quiet.value = await window.hundun.quiet.get()
-  await refreshTree()
 
   offs.push(window.hundun.chat.onDelta(appendDelta))
   offs.push(
@@ -195,15 +186,6 @@ onMounted(async () => {
     window.hundun.chat.onCompacted((d) => {
       notice.value = `聊得有点长，压缩了 ${d.dropped} 条旧消息——该记的已经先写进记忆了。`
       noticeBad.value = false
-    })
-  )
-  offs.push(
-    window.hundun.chat.onCheckpointStart((d) => {
-      messages.value.push({ role: 'divider', content: d.label + ' 检查点' })
-      liveIdx.value = -1
-      startLive()
-      streaming.value = true
-      scrollBottom()
     })
   )
   offs.push(window.hundun.quiet.onState((on) => (quiet.value = on)))
@@ -319,8 +301,7 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-for="(m, i) in messages" :key="i">
-            <div v-if="m.role === 'divider'" class="divider">{{ m.content }}</div>
-            <div v-else class="msg" :class="{ me: m.role === 'user' }">
+            <div class="msg" :class="{ me: m.role === 'user' }">
               <div v-if="m.role !== 'user'" class="avatar">馄</div>
               <div class="content">
                 <div v-if="m.role === 'user'" class="bubble">{{ m.content }}</div>

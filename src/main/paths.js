@@ -8,7 +8,7 @@ const fs = require('fs')
  * 三层：一个软件 → 多个人（users）→ 每个人有多个 agent（agents）。
  *
  *   ~/life/users/<QQ号>/agents/<agent>/
- *     SOUL.md IDENTITY.md USER.md MEMORY.md CHECKPOINTS.md COMMITMENTS.md
+ *     SOUL.md IDENTITY.md USER.md MEMORY.md COMMITMENTS.md
  *     memory/ chat/ .index/
  *
  * 记忆刻意不放在 userData 里：这些文件是用户的，应当可读、可 git、可用任何编辑器改。

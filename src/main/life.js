@@ -100,26 +100,6 @@ const TPL_MEMORY = `# MEMORY.md — 长期记忆
 （暂无）
 `
 
-const TPL_CHECKPOINTS = `# CHECKPOINTS.md — 检查点
-
-> 这里是馄饨主动开口时说的话。你可以直接改，改完立即生效。
-
-## 早间
-先看一眼 USER.md 和昨天的记录。用两三句话问我：今天最重要的一件事是什么。
-如果昨天有明确说了要做却没做的，先提那件，别问新的。
-不要列清单，不要给建议，只问一个问题。
-
-## 晚间
-让我用一句话说今天过得怎么样。
-然后你自己判断今天有什么值得留下的，写进记忆里。
-如果我一句都不想多说，就别追问，只留一行。
-
-## 通用规则
-- 每天最多两次主动开口，别更多。
-- 一次只问一个问题。
-- 静音日（今天别烦我）完全不出现。
-`
-
 const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
 
 > 一条一行，四样东西：**什么事、到期日、结局、消息**。
@@ -166,7 +146,6 @@ const SEEDS = {
   'IDENTITY.md': TPL_IDENTITY,
   'USER.md': TPL_USER,
   'MEMORY.md': TPL_MEMORY,
-  'CHECKPOINTS.md': TPL_CHECKPOINTS,
   'COMMITMENTS.md': TPL_COMMITMENTS
 }
 
@@ -655,25 +634,7 @@ function buildSystemPrompt(opts = {}) {
   return parts.join('\n\n')
 }
 
-/** 取 CHECKPOINTS.md 里某一节的正文（用户可直接改这个文件来调它开口的方式） */
-function checkpointSection(label) {
-  const txt = readSafe('CHECKPOINTS.md', 8000)
-  const out = []
-  let on = false
-  for (const line of txt.split('\n')) {
-    const h = line.match(/^##\s+(.+?)\s*$/)
-    if (h) {
-      on = h[1].trim() === label
-      continue
-    }
-    if (on) out.push(line)
-  }
-  const body = out.join('\n').trim()
-  return body || '按惯例开口：先看一眼昨天的记录，再问他今天最重要的一件事。'
-}
-
 module.exports = {
-  checkpointSection,
   ensureLife,
   ensureJournal,
   readSafe,
