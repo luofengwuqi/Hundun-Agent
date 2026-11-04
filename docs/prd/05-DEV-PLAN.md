@@ -72,6 +72,7 @@ M3 收口    备份、人格、联网、视觉                        ← 可以
 > **这一阶段的判据：不改任何行为，只把「决策已定但代码没跟上」的地方对上。**
 
 ### P-01 真机起一次 ——「唯一的门」
+> **状态：受阻（2026-11-04）。** 开发沙箱里 Electron 起不来，`exited with signal SIGTRAP`——和这里 chromium 的老问题同因，与代码无关。这一条只能由他本人在桌面会话跑 `npm run dev` 确认。**在它通过之前，M0 其余项都已经做了，但「它能跑」仍然是推断而不是事实。**
 
 - 做什么：`npm install` → `npm run dev`，在 Windows 上开一次窗口。
 - 为什么排第一：**前面所有分析都建立在「它能跑」上，而它从没在这台机器上跑过。** E01 的 4GB 限制是开发机的，O06 要求在新机器复核。
@@ -80,30 +81,35 @@ M3 收口    备份、人格、联网、视觉                        ← 可以
 - **不通过怎么办**：M0 全部停下，先解决启动。不要绕过它去做功能——那是把房子盖在没打的地基上。
 
 ### P-02 依赖与打包双平台（O01／O03）
+> **状态：配置已改，未在 Windows 验证（2026-11-04）。** 根因是 `devDependencies` 里写死了 `@esbuild/linux-x64` 与 `@rollup/rollup-linux-x64-gnu`——那不是「要装的东西」，是**平台产物**，写死就等于「只能在 linux 上装」。已删掉这两行，交给 esbuild／rollup 自己的 optionalDependencies 按平台取；补了 `win: nsis` 与 `build:win`。`package-lock.json` 已同步。**真机产出 `dist/*.exe` 仍未验。**
 
 - 改 `package.json`：devDependencies 补 `@esbuild/win32-x64`（以及实际报错缺失的那个）；`build` 里加 `win: { target: ['nsis'] }`。
 - 风险：electron-builder 在 Windows 上打 Linux 包需要 Docker，**不必两边都在本机打**，各平台打各自的。
 - 通过标准：Windows 上 `npm run build` 产出 `dist/*.exe` 且装得上。
 
 ### P-03 ✕ 收进托盘（D026，**关键**）
+> **状态：已做（2026-11-04）。** `win:close` 改为 `hide()`；`window-all-closed` 不再 `app.quit()`。顺带修了一处**不会报错的漏**：`hide()` 不触发 `close` 事件，所以窗口位置在关窗前先存一次，否则「记住窗口大小」这件事从此静默失效。
 
 - 改 `index.js:316`：`ipcMain.on('win:close', () => mainWindow.hide())`；`window-all-closed` 里删掉 `app.quit()`（保留 `clearInterval`）。
 - **这是全项目最高性价比的一改**：一行代码，决定打扰功能到底存不存在。现在这条不修，F06 整套做完也是零。
 - 通过标准：`F11-05`、`F06-18` —— 点 ✕ 后进程还在，到期的约定仍能触发。
 
 ### P-04 清掉旧形态的默认值（D039／D047／O10）
+> **状态：已做（2026-11-04），比原计划多删了一块。** `checkpoints` 默认值清空之后，这一整套就没有任何入口了（设置里那块 UI 也删了），于是**整块删掉**而不是留着永远不触发：`CHECKPOINTS.md` 模板、`checkpointSection()`、`fireCheckpoint`／`tickScheduler`／20 秒轮询、`checkpoint:start` 事件、`store` 里的 `checkpoints` 字段。**留一套永远不触发的旧调度，比删掉更糟**——它不报错、不崩，只表现为「它从此不再找我」。重建见 P-10，判据是约定不是钟点。
 
 - `store.js`：`DEFAULTS.checkpoints = []`；**删掉 `read()` 里那段「空数组就用默认值补回来」的兜底**（`:34-36`）。那段是「删了又长回来」型缺陷。
 - `life.js`：`CHECKPOINTS.md` 从 SEEDS 里摘掉，`checkpointSection()` 整体删除（O11）。它的职责由约定本身接管。
 - 通过标准：`F06-00` —— 全文搜 `08:30`／`21:30` 不得出现在任何默认值里；装完第一次启动，它一句话都不说。
 
 ### P-05 删死代码（O09）
+> **状态：已做（2026-11-04）。** 删 `MemoryPanel.vue`（此前已无引用）、`life:read`／`life:write`／`life:tree` 三组 IPC 与 preload 对应方法、`App.vue` 里只写不读的 `tree`／`refreshTree`、只由检查点产生的 `divider` 渲染分支。删前确认过 `persistNotes` 走的是主进程直接调用 `life.appendJournal`，不经 IPC；删后 86 项测试全过、日记照常落盘。顺手把设置里写死的 `~/life` 改成显示**当前身份目录**（F11-02 的那条边界）。
 
 - 删 `components/MemoryPanel.vue`、`App.vue` 里的引入与 `memoryOpen`、`preload.js` 与 `index.js` 里的 `life:read`／`life:write`。
 - **删之前必须确认**：`conversation.persistNotes` 不走这两个 IPC（它是主进程直接调 `life.writeSafe`，不经过 IPC）。确认方法：删完聊一轮，日记要照样写进去。
 - 通过标准：聊一轮 → `⟨身份⟩/memory/今天.md` 有新内容（P-24 之后身份目录已改，`~/life/memory/` 是旧布局）。
 
 ### P-06 把自测回路跑通（投资项）
+> **状态：已做（2026-11-04）。** `npm run check`：构建 → 单元测试 → 产物与 preload 检查，任一失败即非零退出；`--gui` 才额外起真窗口截图，起不来记「跳过」并明确打出来（判的是机器有没有图形环境，不是代码对不对）。`--no-build` 用于产物已最新时。
 
 - 现有：`scripts/mock-llm.py`（假模型）、`scripts/test-e2e.mjs`、`HUNDUN_SHOT`（自动截图）。
 - 做什么：写一个能一键跑的脚本，覆盖「起窗口 → 发一句 → 截图 → 查文件」。
@@ -298,6 +304,7 @@ M3 收口    备份、人格、联网、视觉                        ← 可以
 > 五步编号 **P-25～P-29**（接在 P-24 之后）。它们不并进 M0–M3 的叙述里，但都是可勾选的任务；**P-25 必须早于任何界面改动。**
 
 ### 第一步：会话复位（P-25，在登录界面之前做）
+> **状态：已做（2026-11-04）。** 新增 `session.js`（代次）与 `identity.js`（唯一切换出口，四件事按序做）；`conversation.js` 在四个位置校验代次——压缩前、检索后、落盘前、`finally` 放锁时。**落盘前那一句是核心**：少了它，上一个身份的回复会写进现在这个身份的 `MEMORY.md`。`index.js` 的忙碌锁同样按代次放开，否则切身份后输入会永久卡住。测试 8 项，其中一条真跑「请求在飞时切身份」。
 
 - `conversation.js` 加 `resetSession()`：清 `history`、`summary`、`busy`。
 - 调用点只有一个，但必须是**所有**切换路径的公共出口——`paths.setContext()` 本身不该干这事（它是路径模块，不该知道会话），由一个身份切换函数统一做四件事：

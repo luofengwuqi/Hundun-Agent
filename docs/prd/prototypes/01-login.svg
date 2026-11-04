@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="700" viewBox="0 0 1020 700">
+<rect width="1020" height="700" fill="#FFF8E8"/>
+<text x="25" y="33" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="500" fill="#352D28">馄饨</text>
+<polyline points="881,21 881,17 888,17 891,21 902,21 902,34 881,34 881,21" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="936,27 949,27" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="984,21 995,32" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="995,21 984,32" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="0,52 1020,52" fill="none" stroke="#E5DCCD" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="473" y="227" font-family="Noto Sans CJK JP, sans-serif" font-size="25" font-weight="500" fill="#352D28">馄饨</text>
+<text x="410" y="271" font-family="Noto Sans CJK JP, sans-serif" font-size="17" font-weight="400" fill="#8E8275">填一个 QQ 号就能进来</text>
+<rect x="345" y="311" width="330" height="46" rx="7" fill="#FFFBF2" stroke="#E5DCCD"/>
+<text x="360" y="342" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="400" fill="#A89B8B">QQ 号</text>
+<rect x="345" y="376" width="330" height="38" rx="7" fill="#E7DFD0" stroke="none"/>
+<text x="496.0" y="401" font-family="Noto Sans CJK JP, sans-serif" font-size="14" font-weight="400" fill="#A29789">进入</text>
+</svg>

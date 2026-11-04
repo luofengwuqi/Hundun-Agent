@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="700" viewBox="0 0 1020 700">
+<rect width="1020" height="700" fill="#FFF8E8"/>
+<text x="25" y="33" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="500" fill="#352D28">馄饨</text>
+<polyline points="881,21 881,17 888,17 891,21 902,21 902,34 881,34 881,21" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="936,27 949,27" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="984,21 995,32" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="995,21 984,32" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="0,52 1020,52" fill="none" stroke="#E5DCCD" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="0" y="53" width="190" height="647" rx="0" fill="#F6EFDF" stroke="none"/>
+<circle cx="35" cy="95" r="17" fill="#E9DECB"/>
+<text x="28" y="100" font-family="Noto Sans CJK JP, sans-serif" font-size="14" font-weight="400" fill="#352D28">馄</text>
+<text x="61" y="103" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="500" fill="#352D28">hundun</text>
+<polyline points="158,94 162,98 166,94" fill="none" stroke="#8E8275" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="12" y="157" width="166" height="41" rx="7" fill="#F0E5D4" stroke="none"/>
+<rect x="0" y="164" width="3" height="25" rx="1" fill="#C3272B" stroke="none"/>
+<polyline points="26,167 43,167 43,179 32,179 28,183 28,179 26,179 26,167" fill="none" stroke="#C3272B" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="58" y="181" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="500" fill="#C3272B">对话</text>
+<polyline points="28,230 30,222 34,219 38,222 40,230 28,230" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="32,234 36,234" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="58" y="232" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="400" fill="#8E8275">打扰</text>
+<polyline points="26,271 43,271" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="31" y="269" width="3" height="4" rx="1" fill="#FFF8E8" stroke="#8E8275"/>
+<polyline points="26,277 43,277" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="38" y="275" width="3" height="4" rx="1" fill="#FFF8E8" stroke="#8E8275"/>
+<polyline points="26,283 43,283" fill="none" stroke="#8E8275" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="33" y="281" width="3" height="4" rx="1" fill="#FFF8E8" stroke="#8E8275"/>
+<text x="58" y="283" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="400" fill="#8E8275">设置</text>
+<polyline points="20,636 170,636" fill="none" stroke="#E5DCCD" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="672" font-family="Noto Sans CJK JP, sans-serif" font-size="13" font-weight="400" fill="#8E8275">切换用户 / 登录</text>
+<polyline points="166,666 161,661 156,666" fill="none" stroke="#8E8275" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="236" y="104" font-family="Noto Sans CJK JP, sans-serif" font-size="18" font-weight="500" fill="#352D28">对话</text>
+<rect x="440" y="155" width="527" height="69" rx="8" fill="#F0E7D7" stroke="none"/>
+<text x="460" y="196" font-family="Noto Sans CJK JP, sans-serif" font-size="16" font-weight="400" fill="#352D28">有点累，不知道接下来该先做哪件。</text>
+<text x="237" y="286" font-family="Noto Sans CJK JP, sans-serif" font-size="18" font-weight="500" fill="#352D28">先不用急着选。</text>
+<text x="237" y="323" font-family="Noto Sans CJK JP, sans-serif" font-size="16" font-weight="400" fill="#352D28">你现在最压着你的是哪一件？只说一件就行。</text>
+<rect x="232" y="600" width="746" height="65" rx="8" fill="#FFFBF2" stroke="#E5DCCD"/>
+<text x="251" y="639" font-family="Noto Sans CJK JP, sans-serif" font-size="15" font-weight="400" fill="#A89B8B">想说什么都行</text>
+<rect x="922" y="614" width="41" height="36" rx="7" fill="#C3272B" stroke="none"/>
+<polyline points="933,631 949,631 943,625 949,631 943,637" fill="none" stroke="#FFF8E8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
