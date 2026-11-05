@@ -73,8 +73,13 @@ async function buildMain() {
   const vendor = path.join(OUT, 'main/vendor')
   if (fs.existsSync(path.join(dist, 'sql-wasm.js'))) {
     fs.mkdirSync(vendor, { recursive: true })
-    fs.copyFileSync(path.join(dist, 'sql-wasm.js'), path.join(vendor, 'sql-wasm.js'))
-    fs.copyFileSync(path.join(dist, 'sql-wasm.wasm'), path.join(vendor, 'sql-wasm.wasm'))
+    // 用 read + write 而不是 copyFileSync。copyfile 这个 syscall 在某些受限容器
+    // 和网络文件系统上会失败，而且失败方式很坏——进程直接退出，连错误栈都不留，
+    // 表现成「构建什么都不说就 exit 1」。read + write 到哪都能用，代价可忽略。
+    const copy = (name) =>
+      fs.writeFileSync(path.join(vendor, name), fs.readFileSync(path.join(dist, name)))
+    copy('sql-wasm.js')
+    copy('sql-wasm.wasm')
   } else {
     // 没装 sql.js 也能构建，检索会自动退回文件扫描
     console.warn('未找到 sql.js，检索将退回内存扫描模式')
