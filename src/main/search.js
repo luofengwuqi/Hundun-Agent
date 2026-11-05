@@ -73,6 +73,28 @@ function queryDb(db, sql, params) {
   return rows
 }
 
+/**
+ * 不进索引的常驻文件。
+ *
+ * 这些文件**每一轮都已经注入**（见 buildSystemPrompt 的 Project Context）。
+ * 再索引一遍不只是冗余：召回那段的说明是「这些是过去真实记下的原话，
+ * 可以直接引用（说「你那天说过」）」——模型会把 SOUL／AGENTS 里的口吻
+ * 当成**他说过的话**复述出来。那是把提示词当记忆，比记不住更糟。
+ *
+ * 索引只该收「随时间累积的东西」：memory/日期.md（日记）与 chat/日期.md（原话）。
+ */
+const NOT_INDEXED = new Set([
+  'AGENTS.md',
+  'SOUL.md',
+  'IDENTITY.md',
+  'USER.md',
+  'MEMORY.md',
+  'RULES.md',
+  'BOOTSTRAP.md',
+  'COMMITMENTS.md',
+  'OPEN.md'
+])
+
 /** 扫描 ~/life 下所有 md，按行切成索引单元 */
 function collectRows() {
   const root = life.lifeDir()
@@ -90,6 +112,7 @@ function collectRows() {
         if (ent.name === '.index' || ent.name.startsWith('.')) continue
         walk(path.join(dir, ent.name), r)
       } else if (ent.name.endsWith('.md')) {
+        if (NOT_INDEXED.has(ent.name)) continue
         let txt
         try {
           txt = fs.readFileSync(path.join(dir, ent.name), 'utf8')

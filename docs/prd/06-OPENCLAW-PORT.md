@@ -39,6 +39,7 @@ hundunAgent 是 **Electron 单进程**：主进程就是全部后端，索引已
 | 承诺要有 follow-through：“到点自己回来说结果” | `## Promised Work`（`promised-work-prompt.ts`） | `## Promised Work` + `<commit>` + 调度器 | D085 |
 | 截断要写在提示词里，不能只留一个省略号 | `## Bootstrap Context Notice` | `ctxFile` / `ctxBlock` 的「只加载了开头 N 字符」 | D085 |
 | 出厂模板逐版升级：只覆盖「逐字等于历史版本」的文件 | 无直接对应（它的模板不升级） | `migrateSoulTemplate` + `SOUL_HISTORY` | D083／D084 |
+| `AGENTS.md` 排第一位（agents=10 < soul=20）：写「这个工作区为什么存在」+ 红线，与人格分离 | `docs/reference/templates/AGENTS.md`、`CONTEXT_FILE_ORDER` | `TPL_AGENTS`，节名照搬（Red Lines／Do Freely／Ask First／First Run／Session Startup／Memory／Make It Yours） | D088 |
 
 ## 二、待搬
 

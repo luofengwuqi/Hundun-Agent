@@ -1240,8 +1240,13 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(iPending > 0 && iPending < iCtx, 'Bootstrap Pending 在 Project Context 之前')
   ok(iRitual > iCtx, 'BOOTSTRAP.md 全文是 Project Context 里的一个文件')
   ok(
-    iRitual - iPending > 0 && iRitual - iPending < 2500,
-    '命令和它的文件之间只隔着 SOUL/IDENTITY/USER —— 离得开就认不出彼此'
+    iRitual - iPending > 0 && iRitual - iPending < 4200,
+    '命令和它的文件之间隔着 AGENTS/SOUL/IDENTITY/USER —— 与 openclaw 的 CONTEXT_FILE_ORDER 一致'
+  )
+  ok(
+    bsFirst.indexOf('## AGENTS.md（这个窗口是干什么的）') <
+      bsFirst.indexOf('## SOUL.md（你是谁、怎么说话）'),
+    'AGENTS.md 排在 SOUL 之前（agents=10 < soul=20，先有目的再有人格）'
   )
   ok(bsFirst.includes('第一句可见回复必须照 BOOTSTRAP.md'), '命令里写死「第一句必须照它来」')
   ok(bsFirst.includes('## Care'), '有 Care 段（行为合同，不放在他改得动的 SOUL 里）')
@@ -2097,7 +2102,79 @@ console.log('\n[3p] 写入回执：说「记住了」不算，块落到盘上才
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
-/* ---------------- 汇总 ---------------- */
+console.log('\n[3q] AGENTS.md：这个窗口为什么存在，排在最前')
 
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const root = path.join(TMP, 'agents')
+  process.env.HUNDUN_LIFE_DIR = root
+  fs.rmSync(root, { recursive: true, force: true })
+  life.ensureLife()
+
+  // 用 life.lifeDir()，不要拼 root：ensureLayout 会把目录搬进 users/<u>/agents/<a>/
+  const agPath = path.join(life.lifeDir(), 'AGENTS.md')
+  ok(fs.existsSync(agPath), '第一次启动就种了 AGENTS.md')
+  const ag = fs.readFileSync(agPath, 'utf8')
+
+  /* ---- 内容：产品目的必须真的在里面 ---- */
+
+  ok(ag.includes('他为什么来，为什么关'), '有「他为什么来」这一节')
+  ok(ag.includes('安慰，或者方向'), '写清了关窗口时该带走什么')
+  ok(ag.includes('比开窗口的时候好一点'), '有可执行的判断标准，不是口号')
+  ok(ag.includes('不要拿废话填'), '给了「两样都给不了」时的出口')
+  ok(ag.includes('先说「好久不见」'), '红线里带着久别回来的顺序（不先催收）')
+  ok(ag.includes('Red Lines') && ag.includes('Do Freely') && ag.includes('Ask First'), '照 openclaw 的 Red Lines / Do Freely / Ask First 三分')
+  ok(ag.includes('First Run') && ag.includes('Session Startup'), '照搬 First Run 与 Session Startup 两节')
+  ok(ag.includes('Make It Yours'), '照搬「这个文件可以改」')
+
+  /* ---- 位置：排在 SOUL 之前，且是常驻 ---- */
+
+  const p0 = life.buildSystemPrompt()
+  ok(p0.includes('## AGENTS.md（这个窗口是干什么的）'), 'AGENTS.md 进了提示词')
+  ok(
+    p0.indexOf('## AGENTS.md（这个窗口是干什么的）') <
+      p0.indexOf('## SOUL.md（你是谁、怎么说话）'),
+    '排在 SOUL 之前（agents=10 < soul=20）'
+  )
+  ok(p0.indexOf('## AGENTS.md（这个窗口是干什么的）') > p0.indexOf('# Project Context'), '属于 Project Context，不是散落在正文')
+  ok(p0.includes('他关窗口的时候，应该带走一样东西'), '提示词里真的能读到这句（不是只写在文件里）')
+
+  /* ---- 常驻：仪式走完之后它必须在（D087 的教训） ---- */
+
+  ok(life.bootstrapPending(), '这时候仪式还没走完')
+  ok(p0.includes('## Bootstrap Pending'), '仪式在提示词里')
+
+  for (let aq = 1; aq <= 5; aq++) life.ingestProfile(['第 ' + aq + ' 件小事'])
+  // 收尾发生在 buildSystemPrompt 开头（retireBootstrapIfDone），所以要先跑一次再判
+  const p1 = life.buildSystemPrompt()
+  ok(!life.bootstrapPending(), '五件问满，仪式退出')
+  ok(!p1.includes('## Bootstrap Pending'), '仪式确实不在了')
+  ok(p1.includes('## AGENTS.md（这个窗口是干什么的）'), '但 AGENTS.md 还在 —— 一次性流程结束不该带走常驻文件')
+  ok(p1.includes('他关窗口的时候，应该带走一样东西'), '内容也还完整，不是只剩标题')
+
+  /* ---- 常驻文件不进索引（否则召回会把它的话当他的话复述） ---- */
+
+  const searchMod = require(path.join(ROOT, 'src/main/search.js'))
+  fs.appendFileSync(life.journalPath(), '- 今天把迁移那个接口收尾了\n', 'utf8')
+  const rowsQ = searchMod.collectRows()
+  const filesQ = new Set(rowsQ.map((r) => r.file))
+  ok(!filesQ.has('AGENTS.md'), 'AGENTS.md 不进索引 —— 每轮都注入，再召回就是把提示词当他的话')
+  ok(!filesQ.has('SOUL.md') && !filesQ.has('USER.md'), 'SOUL／USER 也不进（老问题，一并挡住）')
+  ok([...filesQ].some((f) => f.startsWith('memory/')), '日记照旧进索引')
+
+  /* ---- 他改过的不被覆盖；删了会补回来（与 BOOTSTRAP 相反） ---- */
+
+  fs.writeFileSync(agPath, '# 我的 AGENTS\n\n## Red Lines\n- 我自己加的一条\n', 'utf8')
+  life.ensureLife()
+  ok(fs.readFileSync(agPath, 'utf8').includes('我自己加的一条'), '他改过的 AGENTS.md 一个字都不碰')
+
+  fs.unlinkSync(agPath)
+  life.ensureLife()
+  ok(fs.existsSync(agPath), '删掉会补回来 —— 它是常驻约定，不是「别再问了」那个开关')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
+/* ---------------- 汇总 ---------------- */
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
 process.exit(fail === 0 ? 0 : 1)
