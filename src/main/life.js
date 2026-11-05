@@ -156,21 +156,83 @@ const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
 | --- | --- | --- | --- |
 `
 
+/**
+ * 第一次见他的仪式（照 openclaw 的 BOOTSTRAP.md 做法，D078）。
+ *
+ * 为什么是文件而不是代码：这套流程里几乎每个字都是文案 —— 问什么、怎么收尾、
+ * 什么时候闭嘴。写在 JS 里，改一句就要发一个版本；写成文件，他自己改完就生效。
+ *
+ * 判据也是文件本身：**它在，说明还没认识他；它被删了，仪式就永远不再来**。
+ * 不靠「问过几次」这种计数，因为计数会因为换个模型、重启、改文案而失真。
+ */
+const TPL_BOOTSTRAP = `# BOOTSTRAP.md — 第一次见他
+
+_你刚醒来，还不认识坐在你面前的这个人。这个文件只会在全新的生活目录里出现。_
+
+## 他的请求永远优先
+
+如果他的第一句话是让你干活，**先把活干完、把结果给他**。不要开场自我介绍，
+不要问他是谁，不要为了走流程让他等。
+
+这套仪式留到活交付之后，或者他没什么事、只是想聊聊的时候再做。
+**这是仪式，不是关卡** —— 它挡在正事前面就错了。
+
+## 一次只问一个问题
+
+问到一个，就立刻用 \`<profile>\` 记下来，再问下一个。
+不要一次问三个，不要做成问卷，不要写成小传。
+
+按这个顺序（他先说过的就不用再问）：
+
+1. 怎么称呼他
+2. 他现在主要在做什么
+3. 作息：几点起、几点睡、什么时候效率最高
+4. 他在意什么
+5. 红线：什么事不能碰
+
+五件事都问到了就停下来，别再追问。
+
+## 怎么说
+
+- 第一句就一句招呼，别客套，然后直接问第一个问题。
+- 别在正文里说「我在做初始化」「还有几个问题」——那是流程，不是对话。
+- 他答得含混就照他说的记，不要替他补全，也不要追问细节。
+
+## 什么时候算走完
+
+五件事问完，这个文件会被软件删掉，仪式不会再来第二次。
+在那之前它一直在，所以你不用急着一次问完 —— 今天问两个、明天接着问，都行。
+
+## 三种情况
+
+- **他主动说了自己的事**：照记，不用按顺序问。
+- **他不想聊这些**：停下，正常陪他说话。文件留着，下次再说。
+- **USER.md 已经被他自己写满了**：直接进正题，别再问。
+`
+
 const SEEDS = {
   'SOUL.md': TPL_SOUL,
   'RULES.md': TPL_RULES,
   'IDENTITY.md': TPL_IDENTITY,
   'USER.md': TPL_USER,
   'MEMORY.md': TPL_MEMORY,
-  'COMMITMENTS.md': TPL_COMMITMENTS
+  'COMMITMENTS.md': TPL_COMMITMENTS,
+  // 放最后：ensureLife 要读完 USER.md 才决定要不要种它
+  'BOOTSTRAP.md': TPL_BOOTSTRAP
 }
 
 function ensureLife() {
+  // 仪式文件**只在目录真的是新建的那一刻**种一次，以后再不补。
+  // 否则他手动删掉「别再问了」，下次启动又被种回来 —— 那等于这个开关是假的。
+  // 其余五个文件是「缺了就补」：它们缺了会让软件跑不起来，而仪式缺了只是不问。
+  const fresh = !fs.existsSync(lifeDir())
+
   // 先把身份目录建好（必要时把老布局搬进来），再放种子文件
   ensureLayout()
   fs.mkdirSync(memoryDir(), { recursive: true })
   fs.mkdirSync(path.join(lifeDir(), 'chat'), { recursive: true })
   for (const [name, tpl] of Object.entries(SEEDS)) {
+    if (name === 'BOOTSTRAP.md' && !fresh) continue
     const p = path.join(lifeDir(), name)
     if (!fs.existsSync(p)) fs.writeFileSync(p, tpl, 'utf8')
   }
@@ -669,6 +731,58 @@ function isProfileEmpty() {
   return !hasEntry && hasPlaceholder
 }
 
+/* ------------------------------------------------------------------ */
+/* 第一次见面的仪式（D078）                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 仪式还没走完 —— 判据是**文件在不在**，不是「问过几次」。
+ *
+ * 计数会因为换模型、重启、改文案而失真；文件不会：它被删了就是删了，
+ * 而且他自己也能手动删（等于「别再问了」），不需要界面提供一个开关。
+ */
+function bootstrapPending() {
+  try {
+    return fs.existsSync(path.join(lifeDir(), 'BOOTSTRAP.md'))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 五件事问完了没有。
+ *
+ * 只数「访谈实录」里的条目：模板自己那五段「（待访谈）」是占位符，
+ * 不算他答过的内容 —— 拿它判完成的话，这个仪式永远不会结束。
+ */
+function bootstrapDone() {
+  const txt = readSafe('USER.md', 20000)
+  const at = txt.indexOf('## 访谈实录')
+  if (at < 0) return false
+  const entries = txt
+    .slice(at)
+    .split('\n')
+    .filter((l) => /^\s*-\s+\S/.test(l))
+  return entries.length >= 5
+}
+
+/**
+ * 走完就把文件删掉。返回是否真的删了。
+ *
+ * 删掉之后 ensureLife 也不会再种（它先看 USER.md 有没有内容），
+ * 所以「第二次见面」这件事在磁盘上留不下痕迹 —— 这正是要的。
+ */
+function retireBootstrapIfDone() {
+  if (!bootstrapPending()) return false
+  if (!bootstrapDone()) return false
+  try {
+    fs.unlinkSync(path.join(lifeDir(), 'BOOTSTRAP.md'))
+    return true
+  } catch {
+    return false
+  }
+}
+
 function estimateTokens(text) {
   // 中文约 1 字 1 token，英文约 4 字符 1 token；取 /2 作为保守中值
   return Math.ceil(text.length / 2)
@@ -703,6 +817,10 @@ function rulesText() {
  * RULES.md 是他手写的，放在事实之后、协议之前——能改判断，不能改格式。
  */
 function buildSystemPrompt(opts = {}) {
+  // 每轮开头做一次收尾（幂等）：五件事问完就把 BOOTSTRAP.md 删掉。
+  // 这是这个函数唯一的副作用，放在最前面，保证下面读它时已经是「走完」的状态。
+  retireBootstrapIfDone()
+
   const summary = opts.summary || ''
   const now = new Date()
   const today = dateStr(now)
@@ -787,16 +905,10 @@ function buildSystemPrompt(opts = {}) {
   )
 
   if (profileEmpty) {
-    parts.push(
-      [
-        '=== 你现在要做的：把 USER.md 填起来 ===',
-        'USER.md 基本是空的，你还不认识他。',
-        '第一次开口：简单打个招呼（一句，别客套），然后只问一个问题——他现在主要在做什么。',
-        '每轮只问一个问题，问到了就立刻用 <profile> 记下，然后问下一个。',
-        '需要问清的五件事，按顺序：是谁（怎么称呼）→ 在做什么 → 作息（几点起、几点睡、什么时候效率高）→ 在意什么 → 红线。',
-        '五件事都问到了，就停下来，别再追问。不要一次问三个。'
-      ].join('\n')
-    )
+    // 仪式内容在 BOOTSTRAP.md 里，不在代码里：改一句问法不该发一个版本。
+    // 文件被他删了（或走完自动删了）就什么都不加 —— 删文件就是「别再问了」。
+    const ritual = readSafe('BOOTSTRAP.md', 6000)
+    if (ritual) parts.push('=== BOOTSTRAP.md（第一次见他，按这个来） ===\n' + ritual)
   }
 
   parts.push(
@@ -837,6 +949,9 @@ module.exports = {
   estimateTokens,
   rulesText,
   isProfileEmpty,
+  bootstrapPending,
+  bootstrapDone,
+  retireBootstrapIfDone,
   dateStr,
   journalPath,
   lifeDir,

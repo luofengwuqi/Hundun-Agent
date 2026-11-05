@@ -64,7 +64,10 @@ ok(prompt.includes('SOUL.md'), '提示里包含 SOUL')
 ok(prompt.includes('MEMORY.md'), '提示里包含 MEMORY')
 ok(prompt.includes('记忆规则'), '提示里包含记忆规则')
 ok(prompt.includes('<longterm>'), '提示声明了 longterm 块')
-ok(prompt.includes('把 USER.md 填起来'), '档案为空时注入访谈指令')
+ok(
+  prompt.includes('BOOTSTRAP.md（第一次见他') && prompt.includes('怎么称呼他'),
+  '档案为空时注入首次见面仪式'
+)
 ok(prompt.includes(life.dateStr()), '提示里带上了今天日期')
 
 /* ---------------- 1a. RULES.md：他自己写的规矩 ---------------- */
@@ -750,7 +753,7 @@ ok(mcSeed.provider.moonshot.options.apiKey === 'sk-old', 'seed 把老 key 带过
 // 收尾：留一份能用的配置，别把坏状态带给后面的界面测试
 store.write({ modelConfig: MODEL_OK })
 
-console.log('\n[3d] 多个模型：一条链，按顺序试')
+console.log('\n[3i] 多个模型：一条链，按顺序试')
 
 const CHAIN_CFG = {
   provider: {
@@ -1210,6 +1213,52 @@ ok(
   life.listCommitments()[0].delivery === '未问' && !ev2.includes('chat:turn'),
   '生成失败不标记（否则下次会重说一遍，而他从没听过第一遍）'
 )
+
+console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
+
+{
+  const bsPrev = process.env.HUNDUN_LIFE_DIR
+  const bsRoot = path.join(TMP, 'bs-new')
+  fs.rmSync(bsRoot, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = bsRoot
+
+  life.ensureLife()
+  ok(life.bootstrapPending(), '全新的生活目录会种一份 BOOTSTRAP.md')
+
+  const bsFirst = life.buildSystemPrompt()
+  ok(bsFirst.includes('BOOTSTRAP.md（第一次见他'), '第一轮提示词里带着仪式')
+  ok(bsFirst.includes('这是仪式，不是关卡'), '带着「别挡在正事前面」这条')
+  ok(bsFirst.includes('一次只问一个问题'), '带着「一次只问一个」')
+  ok(!life.bootstrapDone(), '一条都没记时不算走完')
+
+  life.appendProfile(['叫他老吴'])
+  ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
+
+  for (let bs = 2; bs <= 5; bs++) life.appendProfile(['第 ' + bs + ' 件事'])
+  ok(life.bootstrapDone(), '五件事记满就算走完')
+
+  const bsDone = life.buildSystemPrompt()
+  ok(!life.bootstrapPending(), '走完的当轮就把文件删了')
+  ok(!bsDone.includes('BOOTSTRAP.md（第一次见他'), '删了之后提示词里不再有仪式')
+
+  life.ensureLife()
+  ok(!life.bootstrapPending(), '重启也不会再种回来')
+
+  const bsRoot2 = path.join(TMP, 'bs-manual')
+  fs.rmSync(bsRoot2, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = bsRoot2
+  life.ensureLife()
+  ok(life.bootstrapPending(), '再开一个新目录，仪式又会出现')
+  fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
+  life.ensureLife()
+  ok(!life.bootstrapPending(), '他手动删掉就等于「别再问了」，重启不补种')
+  ok(
+    !life.buildSystemPrompt().includes('BOOTSTRAP.md（第一次见他'),
+    '删掉之后提示词里也没有它'
+  )
+
+  process.env.HUNDUN_LIFE_DIR = bsPrev
+}
 
 console.log('\n[4] 界面：SSR 渲染')
 
