@@ -49,6 +49,20 @@ function resolveIcon() {
   return candidates.find((p) => p && fs.existsSync(p)) || null
 }
 
+/**
+ * 托盘用小尺寸那张（32px 由 scripts/gen-icon.py 从 build/logo.svg 生成）。
+ * 托盘环境按系统 DPI 取图，直接拿 512 的窗口图标缩到 22 会糊：
+ * 源图缩小时的损失比重绘一次大得多。
+ */
+function resolveTrayIcon() {
+  const candidates = [
+    path.join(ROOT, 'resources/tray.png'),
+    path.join(process.resourcesPath || '', 'tray.png'),
+    path.join(ROOT, 'build/icons/32x32.png')
+  ]
+  return candidates.find((p) => p && fs.existsSync(p)) || null
+}
+
 /* ------------------------------------------------------------------ */
 /* 窗口                                                                */
 /* ------------------------------------------------------------------ */
@@ -126,7 +140,7 @@ function showWindow() {
 /* ------------------------------------------------------------------ */
 
 function buildTray() {
-  const icon = resolveIcon()
+  const icon = resolveTrayIcon() || resolveIcon()
   if (!icon) return
   try {
     tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 22, height: 22 }))

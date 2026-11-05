@@ -3,6 +3,12 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import SettingsPage from './components/SettingsPage.vue'
 import { renderMarkdown } from './markdown'
 
+// logo 的唯一源是 build/logo.svg，构建时原样拷到 out/renderer/。
+// 用 './logo.svg' 字面量会被 esbuild 当模块依赖去解析（找不到就报错），
+// 所以走变量拼出来，运行时按当前文档位置解析——窗口是 file:// 加载的，相对路径才对。
+// 位置必须在 import 之后：前面插 const，import 的 hoist 会让它排到顶部，ESM 直接语法报错。
+const LOGO = './logo.svg'
+
 const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
@@ -320,7 +326,7 @@ onBeforeUnmount(() => {
   <div class="shell">
     <header class="titlebar">
       <div class="brand">
-        <span class="mark">馄</span>
+        <img class="mark" :src="LOGO" alt="" draggable="false" />
         <span>馄饨</span>
         <small>记得你说过什么</small>
       </div>
@@ -414,7 +420,9 @@ onBeforeUnmount(() => {
 
           <template v-for="(m, i) in messages" :key="i">
             <div class="msg" :class="{ me: m.role === 'user' }">
-              <div v-if="m.role !== 'user'" class="avatar">馄</div>
+              <div v-if="m.role !== 'user'" class="avatar">
+                <img :src="LOGO" alt="馄饨" draggable="false" />
+              </div>
               <div class="content">
                 <div v-if="m.role === 'user'" class="bubble">{{ m.content }}</div>
                 <div

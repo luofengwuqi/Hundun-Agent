@@ -8,6 +8,11 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 
+// logo 的唯一源是 build/logo.svg，构建时原样拷到 out/renderer/。
+// 字面量 './logo.svg' 会被 esbuild 当模块依赖去解析（找不到就报错），所以走变量。
+// 位置必须在 import 之后：插在 import 前面，hoist 会让 const 排到顶部，ESM 语法报错。
+const LOGO = './logo.svg'
+
 const props = defineProps({ cfg: { type: Object, required: true } })
 const emit = defineEmits(['saved'])
 
@@ -557,6 +562,7 @@ const dirLabel = computed(() => {
       <section class="set-block last">
         <h2>关于</h2>
         <div class="about">
+          <img class="about-mark" :src="LOGO" alt="馄饨" draggable="false" />
           <span>馄饨 Agent {{ info.version || '' }}</span>
           <span class="dot">·</span>
           <span>Electron {{ info.electron || '?' }}</span>

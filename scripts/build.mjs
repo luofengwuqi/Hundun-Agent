@@ -126,6 +126,32 @@ async function buildHtml() {
   fs.writeFileSync(path.join(OUT, 'renderer/index.html'), html)
 }
 
+/**
+ * logo 只有一个源：build/logo.svg。
+ *
+ * 界面里是 <img src="./logo.svg">，走 publicDir 原样拷进 out/renderer/。
+ * 这里每次构建都从 build/logo.svg 重铺一遍 public/logo.svg，是为了「换了源就自动生效」——
+ * 否则改了 build/logo.svg 却忘了跑 npm run gen-icon，界面还显示旧图，而且没人看得出来。
+ * 同理补一次 resources/icon.png 的兜底：直接拷 SVG 是不行的，它要 PNG。
+ */
+function syncLogo() {
+  const src = path.join(ROOT, 'build/logo.svg')
+  if (!fs.existsSync(src)) {
+    console.warn('build/logo.svg 不存在，界面 logo 会 404')
+    return
+  }
+  const pub = path.join(ROOT, 'src/renderer/public')
+  fs.mkdirSync(pub, { recursive: true })
+  const dst = path.join(pub, 'logo.svg')
+  const body = fs.readFileSync(src, 'utf8')
+  if (fs.existsSync(dst) && fs.readFileSync(dst, 'utf8') === body) return
+  fs.writeFileSync(dst, body)
+  // PNG 只能靠 gen-icon 出，缺了就提醒一句，不至于让人对着空图标找半天
+  if (!fs.existsSync(path.join(pub, 'icon.png'))) {
+    console.warn('缺 src/renderer/public/icon.png，先跑一次 npm run gen-icon')
+  }
+}
+
 async function main() {
   rmrf(OUT)
   fs.mkdirSync(path.join(OUT, 'renderer/assets'), { recursive: true })
@@ -135,6 +161,7 @@ async function main() {
   // 三步合计几百毫秒，串行的代价可以忽略，换来的是构建结果稳定。
   await buildMain()
   await buildPreload()
+  syncLogo()
   await buildRenderer()
   await buildHtml()
   console.log('构建完成 → out/')

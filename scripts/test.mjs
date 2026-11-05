@@ -1014,10 +1014,39 @@ const idx = path.join(ROOT, 'out/renderer/index.html')
 ok(fs.existsSync(idx), 'out/renderer/index.html 存在')
 const idxHtml = fs.readFileSync(idx, 'utf8')
 const refs = [...idxHtml.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1])
-ok(refs.length === 2, '页面引用了 js 与 css', refs.join(', '))
+// 不断言「正好 2 个」：页面引用的东西会变多（favicon、logo…），
+// 真正要守的是 js 和 css 都在，而且每个引用都落到了产物里。
+ok(refs.includes('assets/app.js'), '页面引用了 js', refs.join(', '))
+ok(refs.includes('assets/app.css'), '页面引用了 css', refs.join(', '))
 for (const r of refs) {
   ok(fs.existsSync(path.join(ROOT, 'out/renderer', r)), '产物存在：' + r)
 }
+
+/* logo：唯一源是 build/logo.svg，其余图标/图片都从它派生。
+   这里守三件事：源在、产物在、界面真的引了它（而不是又画了一个字）。 */
+const logoSvg = path.join(ROOT, 'build/logo.svg')
+ok(fs.existsSync(logoSvg), 'build/logo.svg 存在（logo 的唯一源）')
+const logoText = fs.existsSync(logoSvg) ? fs.readFileSync(logoSvg, 'utf8') : ''
+// viewBox 按图形包围盒收紧过（221×141 左右）。不写成定值：
+// 以后微调留白会让数字变，真正要守的是「有 viewBox、且是横宽的」——
+// 横宽才说明裁掉了上下的大片空白，竖长的原始 256×256 画布会让界面里图标看着只有一点点大。
+const vb = (logoText.match(/viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"/) || []).slice(1).map(Number)
+ok(vb.length === 4, 'logo.svg 带 viewBox')
+ok(vb.length === 4 && vb[2] / vb[3] > 1.3 && vb[2] / vb[3] < 1.9, 'logo viewBox 已按图形收紧（横宽）', vb.join(' '))
+ok((logoText.match(/<path/g) || []).length === 2, 'logo.svg 是两条 path（轮廓 + A）')
+ok(
+  fs.existsSync(path.join(ROOT, 'out/renderer/logo.svg')),
+  '构建把 logo.svg 拷进了 out/renderer（file:// 下相对路径才解析得到）'
+)
+const appJs = fs.readFileSync(path.join(ROOT, 'out/renderer/assets/app.js'), 'utf8')
+ok(appJs.includes('./logo.svg'), '界面引用了 logo.svg')
+// 打包图标齐全：Windows 认 .ico，macOS 认 .icns，Linux 认 png 集
+ok(fs.existsSync(path.join(ROOT, 'build/icon.ico')), 'build/icon.ico 存在（Windows 打包）')
+ok(fs.existsSync(path.join(ROOT, 'build/icon.icns')), 'build/icon.icns 存在（macOS 打包）')
+for (const s of [16, 32, 256, 512]) {
+  ok(fs.existsSync(path.join(ROOT, `build/icons/${s}x${s}.png`)), `图标集有 ${s}px`)
+}
+ok(fs.existsSync(path.join(ROOT, 'resources/tray.png')), '托盘图标存在')
 ok(!idxHtml.includes('<!--BUNDLE-->'), '占位符已被替换')
 
 /* ---------------- 6. 检索层 ---------------- */

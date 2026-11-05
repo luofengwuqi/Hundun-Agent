@@ -90,17 +90,17 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* logo 用矢量（public/logo.svg），任何 DPI 下都不糊。
+   框给成横的：标记本身宽高比约 1.57，塞进正方形框会为了等高缩掉一截，
+   顶栏里看着就只有一点点大。 */
 .mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff8e8;
-  font-size: 12px;
-  line-height: 22px;
-  text-align: center;
-  font-weight: 700;
-  flex: 0 0 22px;
+  display: block;
+  width: 34px;
+  height: 24px;
+  flex: 0 0 34px;
+  object-fit: contain;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .brand small {
@@ -203,18 +203,28 @@ body {
   }
 }
 
+/* 头像同样是 logo，但这里要「像个头像」——铺一层极淡的暖底把细线托住。
+   横宽的标记放进正圆会有左右空白，所以圆的直径要略大于标记高度，
+   否则整条馄饨贴边，看着像被裁掉了。 */
 .avatar {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  flex: 0 0 26px;
-  margin-top: 3px;
-  background: var(--accent);
-  color: #fff8e8;
-  font-size: 12.5px;
-  line-height: 26px;
-  text-align: center;
-  font-weight: 700;
+  flex: 0 0 28px;
+  margin-top: 2px;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 24px;
+  height: 16px;
+  object-fit: contain;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .msg.me {
@@ -1418,6 +1428,14 @@ textarea::placeholder {
   gap: 8px;
   color: var(--ink-3);
   font-size: 12px;
+}
+
+.about-mark {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  margin-right: 2px;
+  -webkit-user-drag: none;
 }
 
 .about .dot {

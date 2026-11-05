@@ -56,7 +56,11 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icons/256x256.png"
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity"
     },
     "nsis": {
       "oneClick": false,

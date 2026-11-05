@@ -1,87 +1,145 @@
 #!/usr/bin/env python3
 """
-生成 HundunAgent 图标集。
-零设计资源：一个朱红圆 + 奶油白「馄」字，和应用内的标识一致。
+由 build/logo.svg 生成 HundunAgent 的全部图标 / 图片资源。
+
+唯一源：build/logo.svg（馄饨 + A 的线稿，单色 #c3272b，透明底）。
+要换 logo 只替换这一个文件、重跑本脚本，别去改生成的 PNG。
 
 产出：
-  resources/icon.png        512  窗口/通知图标
-  resources/tray.png         64  托盘
-  build/icons/<size>.png    16..512  electron-builder Linux 图标集
-                              (必须是指标集目录，单文件会解析出 size=0，
-                               见 hundunDesktop 决策 50)
+  resources/icon.png              512  窗口图标（Linux）
+  resources/tray.png               32  托盘
+  build/icons/<size>.png        16..512  electron-builder 图标集
+  build/icon.ico                   256  Windows 打包图标（多尺寸）
+  build/icon.icns                  512  macOS 打包图标
+  src/renderer/public/icon.png     256  窗口兜底 / favicon
+  src/renderer/public/logo.svg          界面里直接 <img src="./logo.svg">（矢量，不糊）
+
+依赖：ImageMagick 的 convert + python3 标准库，不依赖 PIL。
 """
 import os
-from PIL import Image, ImageDraw, ImageFont
-
-RED = (195, 39, 43, 255)
-RED_DARK = (163, 28, 33, 255)
-CREAM = (255, 248, 232, 255)
+import struct
+import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc"
-FONT_INDEX = 0  # ttc 首个子字体，中文覆盖正常
+SRC = os.path.join(ROOT, "build", "logo.svg")
+RES = os.path.join(ROOT, "resources")
+ICONS = os.path.join(ROOT, "build", "icons")
+PUB = os.path.join(ROOT, "src", "renderer", "public")
 
-SS = 4  # 超采样倍数
+SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
+
+# logo 已按图形包围盒收紧过 viewBox（221×141，宽高比约 1.57）。
+# 图标是正方形，直接按高度缩会左右留出大片空，所以先「按宽度铺满」再居中补高。
+# 留白给得小：标记是线稿，四周再空一圈，小尺寸就只剩一根头发丝。
+MARGIN = 0.05  # 四周留白比例
 
 
-def draw_icon(size):
-    """画一张 size×size、背景透明的图标"""
-    px = size * SS
-    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+def magick(*args):
+    """跑 convert，失败就抛异常（不静默吞错）"""
+    cmd = ["convert"] + [str(a) for a in args]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError("convert %s 失败: %s" % (" ".join(cmd[1:]), r.stderr.decode().strip()))
+    return r
 
-    pad = px * 0.04
-    box = [pad, pad, px - pad, px - pad]
-    d.ellipse(box, fill=RED, outline=RED_DARK, width=max(1, int(px * 0.012)))
 
-    if size >= 24 and os.path.exists(FONT_PATH):
-        # 中文字形几乎撑满 em 框，字号给到 0.42 才不会顶到圆边
-        fsize = int(px * 0.42)
-        font = ImageFont.truetype(FONT_PATH, fsize, index=FONT_INDEX)
-        ch = "馄"
-        bbox = d.textbbox((0, 0), ch, font=font)
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-        d.text(
-            ((px - w) / 2 - bbox[0], (px - h) / 2 - bbox[1] + px * 0.01),
-            ch,
-            font=font,
-            fill=CREAM,
-        )
-    else:
-        # 极小尺寸：中文字糊成一团，改画一道奶油色弧线当记号
-        r = px * 0.30
-        cx = cy = px / 2
-        d.arc(
-            [cx - r, cy - r * 0.9, cx + r, cy + r * 0.9],
-            start=200,
-            end=340,
-            fill=CREAM,
-            width=max(1, int(px * 0.10)),
-        )
+def render_square(src_path, size):
+    """
+    等比缩到 size×size 的透明画布正中，四周留 MARGIN 的边（不拉伸）。
 
-    return img.resize((size, size), Image.LANCZOS)
+    用 -resize {inner}x{inner}（等比）而不是 {inner}x{inner}!：
+    标记是横宽的，强制成正方形会把馄饨压扁；等比缩完高度不满，靠 -extent 补透明。
+    """
+    inner = max(1, size - int(round(size * MARGIN)) * 2)
+    out = "/tmp/hundun-logo-out-%d.png" % size
+    # -unsharp 是为小尺寸准备的：线稿只有 1~2px 粗，纯 Lanczos 缩下来边缘会虚成一片粉。
+    # 轻微锐化让 16/32 也能看出「馄饨轮廓 + A」而不是一团红。
+    magick(
+        src_path,
+        "-resize", "%dx%d" % (inner, inner),
+        "-unsharp", "0x0.8+1+0",
+        "-background", "none",
+        "-gravity", "center",
+        "-extent", "%dx%d" % (size, size),
+        out,
+    )
+    with open(out, "rb") as f:
+        data = f.read()
+    os.unlink(out)
+    return data
+
+
+def write_ico(pngs, out):
+    """手写 .ico（只用标准库）。Vista+ 允许内嵌 PNG，256 及以下直接塞 PNG。"""
+    n = len(pngs)
+    header = struct.pack("<HHH", 0, 1, n)
+    entries = b""
+    offset = 6 + 16 * n
+    blobs = b""
+    for size, data in pngs:
+        w = 0 if size >= 256 else size
+        entries += struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+        blobs += data
+    with open(out, "wb") as f:
+        f.write(header + entries + blobs)
+
+
+def write_icns(pngs, out):
+    """手写 .icns，写 icp4/icp5/icp6/ic07/ic08/ic09。"""
+    legend = {16: b"icp4", 32: b"icp5", 64: b"icp6", 128: b"ic07", 256: b"ic08", 512: b"ic09"}
+    chunks = b""
+    for size, data in pngs:
+        tag = legend.get(size)
+        if tag:
+            chunks += tag + struct.pack(">I", len(data) + 8) + data
+    with open(out, "wb") as f:
+        f.write(b"icns" + struct.pack(">I", len(chunks) + 8) + chunks)
 
 
 def main():
-    os.makedirs(os.path.join(ROOT, "resources"), exist_ok=True)
-    os.makedirs(os.path.join(ROOT, "build", "icons"), exist_ok=True)
+    if not os.path.exists(SRC):
+        print("找不到 %s" % SRC, file=sys.stderr)
+        return 1
 
-    draw_icon(512).save(os.path.join(ROOT, "resources", "icon.png"))
-    draw_icon(64).save(os.path.join(ROOT, "resources", "tray.png"))
+    for d in (RES, ICONS, PUB):
+        os.makedirs(d, exist_ok=True)
 
-    for s in (16, 24, 32, 48, 64, 128, 256, 512):
-        draw_icon(s).save(os.path.join(ROOT, "build", "icons", f"{s}x{s}.png"))
+    # 先把矢量渲成一张 2048 的位图并裁掉空边，之后所有尺寸都从它缩，保证一致。
+    # 2048 而不是 1024：ImageMagick 的 MSVG 渲染器抗锯齿一般，超采样给足
+    # 才能在 16/32 这种尺寸上保住线稿的清晰度。
+    big = "/tmp/hundun-logo-src.png"
+    magick("-background", "none", "-density", "384", SRC, "-resize", "2048x2048", "-trim", "+repage", big)
 
-    # 窗口图标走 vite publicDir
-    pub = os.path.join(ROOT, "src", "renderer", "public")
-    os.makedirs(pub, exist_ok=True)
-    draw_icon(256).save(os.path.join(pub, "icon.png"))
+    bufs = {s: render_square(big, s) for s in SIZES}
 
-    print("图标已生成：resources/icon.png · resources/tray.png · build/icons/* · public/icon.png")
+    def save(path, size):
+        with open(path, "wb") as f:
+            f.write(bufs[size])
+
+    save(os.path.join(RES, "icon.png"), 512)
+    save(os.path.join(RES, "tray.png"), 32)
+    for s in SIZES:
+        save(os.path.join(ICONS, "%dx%d.png" % (s, s)), s)
+
+    write_ico([(s, bufs[s]) for s in (16, 24, 32, 48, 64, 128, 256)], os.path.join(ROOT, "build", "icon.ico"))
+    write_icns([(s, bufs[s]) for s in (16, 32, 64, 128, 256, 512)], os.path.join(ROOT, "build", "icon.icns"))
+
+    save(os.path.join(PUB, "icon.png"), 256)
+    with open(SRC, "r", encoding="utf-8") as f:
+        svg = f.read()
+    with open(os.path.join(PUB, "logo.svg"), "w", encoding="utf-8") as f:
+        f.write(svg)
+
+    print("图标已由 build/logo.svg 生成：")
+    print("  resources/icon.png · resources/tray.png")
+    print("  build/icons/*.png · build/icon.ico · build/icon.icns")
+    print("  src/renderer/public/icon.png · src/renderer/public/logo.svg")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
