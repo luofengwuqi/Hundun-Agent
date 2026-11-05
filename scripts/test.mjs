@@ -1791,6 +1791,71 @@ try {
   ok(false, 'SQL 语义验证失败', (e.stdout || '') + (e.message || ''))
 }
 
+/* ---------------- 3m. 老目录补仪式 + 老 SOUL 升级 ---------------- */
+console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次')
+
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+
+  // 造一个「D078 之前就存在」的目录：种子文件都在，唯独没有 BOOTSTRAP.md、没有标记
+  const oldRoot = path.join(TMP, 'oldlife')
+  fs.rmSync(oldRoot, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = oldRoot
+  life.ensureLife()
+  fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
+  fs.rmSync(path.join(life.lifeDir(), '.bootstrap'), { force: true })
+  ok(!life.bootstrapPending(), '前提：这是没有仪式的老目录')
+
+  life.ensureLife()
+  ok(life.bootstrapPending(), '老目录 + 空档案 → 补种一次仪式（今天没被问的成因就是这个）')
+  ok(
+    life.buildSystemPrompt().includes('BOOTSTRAP.md（第一次见他'),
+    '补种的仪式当轮就进了提示词'
+  )
+
+  // 他删掉 = 别再问了。标记记着「这件事决定过」，所以重启也不补
+  fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
+  life.ensureLife()
+  ok(!life.bootstrapPending(), '删掉之后不再补种（靠标记，不靠目录新旧）')
+
+  // 档案里已经有他：不种仪式，只落标记
+  const knownRoot = path.join(TMP, 'oldknown')
+  fs.rmSync(knownRoot, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = knownRoot
+  life.ensureLife()
+  fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
+  fs.rmSync(path.join(life.lifeDir(), '.bootstrap'), { force: true })
+  life.ingestProfile(['称呼｜叫他老吴'])
+  life.ensureLife()
+  ok(!life.bootstrapPending(), '档案里已经有他 → 不补仪式（早就认识的人不必再走一遍）')
+  ok(fs.existsSync(path.join(life.lifeDir(), '.bootstrap')), '但落一次标记，不用每轮重判')
+
+  // 老 SOUL → 新 SOUL：只动他没改过的那份
+  const soulPath = path.join(life.lifeDir(), 'SOUL.md')
+  fs.writeFileSync(
+    soulPath,
+    '# SOUL.md — 馄饨是谁\n\n## 你说话的方式\n- 不安慰过度。\n- 该顶的时候顶。\n\n## 改写记录\n（暂无）\n',
+    'utf8'
+  )
+  life.ensureLife()
+  const soul = fs.readFileSync(soulPath, 'utf8')
+  ok(soul.includes('外面这层'), '老 SOUL 升级成「温柔外壳 + 理性内核」')
+  ok(soul.includes('不要翻旧账'), '带着「不数落他重复」这条（那句「你第三遍了」的反面）')
+  ok(soul.includes('结论不能软'), '理性那层没丢：方式可以软，结论不能软')
+
+  life.ensureLife()
+  ok(
+    (fs.readFileSync(soulPath, 'utf8').match(/外面这层/g) || []).length === 1,
+    '再跑一遍不会换第二次（幂等）'
+  )
+
+  fs.writeFileSync(soulPath, '# 我的 SOUL\n\n## 改写记录\n（我自己改过）\n', 'utf8')
+  life.ensureLife()
+  ok(!fs.readFileSync(soulPath, 'utf8').includes('外面这层'), '他改过 SOUL → 一个字都不碰')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
 /* ---------------- 汇总 ---------------- */
 
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')

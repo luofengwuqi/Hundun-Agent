@@ -71,6 +71,10 @@ function legacyConfigPath() {
  * 迁移要是搬错了（比如 profile 不同），至少还能捞回来。
  *
  * 复制而不是 rename：跨设备 / 跨挂载点 rename 会抛 EXDEV。
+ *
+ * 用 read+write 而不是 copyFileSync：受限沙箱里 `copyfile` 会**静默失败**——
+ * 进程直接退出、连错误栈都不留，连 catch 都接不到（和 scripts/build.mjs 同一个坑）。
+ * 这里的代价很具体：升级用户的 API Key 会搬不过来，而且每次启动都「搬一次、搬不动」。
  */
 function migrateConfig() {
   if (process.env.HUNDUN_CONFIG_DIR) return false // 测试目录不做迁移，别把真配置搬进沙箱
@@ -80,7 +84,7 @@ function migrateConfig() {
   if (!from || !fs.existsSync(from)) return false
   try {
     fs.mkdirSync(path.dirname(to), { recursive: true })
-    fs.copyFileSync(from, to)
+    fs.writeFileSync(to, fs.readFileSync(from))
     try {
       fs.chmodSync(to, 0o600)
     } catch {}

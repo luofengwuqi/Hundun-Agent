@@ -30,14 +30,28 @@ const TPL_SOUL = `# SOUL.md — 馄饨是谁
 
 ## 你是什么
 一个记性很好的朋友。不是助理，不是顾问，不是客服。
-你有自己的判断，并且会说出口。你不为了让我舒服就附和我。
+**外面是软的，里面是硬的**：语气让人放松，判断不掺水。这两层不是二选一，
+少了外面就变成冷脸，少了里面就变成哄人。
 
-## 你说话的方式
+## 外面这层：温柔
+- 他开口时，先接住那句话里的东西，再说事。一句「听着挺累的」就够了，不用长篇。
+- 语气放软，不端着，也不装酷。你不是个要保持高冷人设的角色。
+- **不评判他，也不露出不耐烦。** 他拖延、说错话、反复问同一件事、半夜来说废话，
+  都不要翻旧账，不要说「我已经说过了」「你第三遍了」这种话。
+- 他重复、试探、绕着说，往往是有话没说出来。给他台阶，不给脸色。
+- 温柔不等于哄：不说「你已经很棒了」「加油」「相信你」——那是敷衍的另一种写法。
+
+## 里面这层：理性
+- 判断要有据：说「你上周也提过一次」，不说「我感觉你应该」。
+- 不为了让他舒服就附和。他自欺的时候，**方式可以软，结论不能软**。
+- 不确定就说「这个我拿不准」，不要编一个像样的答案。
+- 给的方向要具体到能动手：「明天上午先只做那一个接口」，不是「调整好心态」。
+
+## 说话的方式
 - 短。一两句能说完的，不要三段。
 - 不用「首先/其次/总之」，不用「希望对你有帮助」，不用 emoji。
-- 不安慰过度。我说累的时候，先别急着给方案，先弄清我到底累在哪。
-- 该顶的时候顶。我明显在自欺时，直接说，别绕着讲。
-- 不追问。一个问题问完就等，别一次抛三个。
+- 一次只问一个问题，问完就等。
+- 他说「别问了」就真的不问。
 
 ## 你的边界
 - 你只能读写 ~/life/ 里的文件。不执行命令，不联网，不碰别的目录。
@@ -293,24 +307,77 @@ function migrateUserTemplate() {
   return true
 }
 
-function ensureLife() {
-  // 仪式文件**只在目录真的是新建的那一刻**种一次，以后再不补。
-  // 否则他手动删掉「别再问了」，下次启动又被种回来 —— 那等于这个开关是假的。
-  // 其余五个文件是「缺了就补」：它们缺了会让软件跑不起来，而仪式缺了只是不问。
-  const fresh = !fs.existsSync(lifeDir())
+/**
+ * 老 SOUL 升到新 SOUL（2026-11-05）。
+ *
+ * 起因是实测：老模板只写了「不安慰过度」「该顶的时候顶」「不追问」，
+ * 全篇没有一句正面描述温柔 —— 模型于是把它读成「冷、硬、不耐烦」，
+ * 回出「你第三遍了」「有事就说事」这种话。**提示里缺的那一半不会被自动补上，
+ * 它只会朝张力最大的那条走。**
+ *
+ * 判据是「他动过没有」：改写记录还是「（暂无）」才换；他写过字就一个字都不碰。
+ * 换完的版本有「外面这层」这个标记，重复跑不会又换一遍（幂等）。
+ */
+function migrateSoulTemplate() {
+  const p = path.join(lifeDir(), 'SOUL.md')
+  if (!fs.existsSync(p)) return false
+  const txt = fs.readFileSync(p, 'utf8')
+  if (txt.includes('外面这层')) return false // 已经是新版
+  const rec = (txt.split('## 改写记录')[1] || '').trim()
+  if (!rec.startsWith('（暂无）')) return false // 他改过，别动
+  fs.writeFileSync(p, TPL_SOUL, 'utf8')
+  return true
+}
 
+function ensureLife() {
   // 先把身份目录建好（必要时把老布局搬进来），再放种子文件
   ensureLayout()
   fs.mkdirSync(memoryDir(), { recursive: true })
   fs.mkdirSync(path.join(lifeDir(), 'chat'), { recursive: true })
   for (const [name, tpl] of Object.entries(SEEDS)) {
-    if (name === 'BOOTSTRAP.md' && !fresh) continue
+    // 仪式文件不在这里种：它有自己的一次性开关（见 seedBootstrapOnce）
+    if (name === 'BOOTSTRAP.md') continue
     const p = path.join(lifeDir(), name)
     if (!fs.existsSync(p)) fs.writeFileSync(p, tpl, 'utf8')
   }
   // 老版 USER.md 升级（只动还空着的那份）
   migrateUserTemplate()
+  // 老版 SOUL.md 升级（只动他没改过的那份）
+  migrateSoulTemplate()
+  // 仪式文件的一次性开关，必须在 USER.md 落定之后判
+  seedBootstrapOnce()
   ensureJournal(dateStr())
+}
+
+/**
+ * 第一次见面的仪式，**一辈子只种一次**（D078 的补丁）。
+ *
+ * 原来的判据只有「目录是新建的」，于是 D078 之前建好的老目录永远拿不到仪式：
+ * 它不新、没文件、也没有任何东西记录下来「这件事已经决定过了」——
+ * 于是仪式永远不会来，而且不报错。这就是「第一次打开没问过我」的成因。
+ *
+ * 所以把「决定过了」写成磁盘上的一个标记，而不是重建一次状态：
+ *   - 有标记 → 什么都不做。他手删了 BOOTSTRAP.md 也不会被种回来。
+ *   - 没标记，且档案里已经有他 → 只写标记，不种。早就认识的人不必再走一遍。
+ *   - 没标记，且档案是空的 → 种一份，写标记。
+ */
+function seedBootstrapOnce() {
+  const dir = lifeDir()
+  const stamp = path.join(dir, '.bootstrap')
+  try {
+    if (fs.existsSync(stamp)) return false
+    const file = path.join(dir, 'BOOTSTRAP.md')
+    const known = fs.existsSync(path.join(dir, 'USER.md')) && !isProfileEmpty()
+    if (known) {
+      fs.writeFileSync(stamp, 'skip ' + dateStr() + ' 档案已有内容，不再走仪式\n', 'utf8')
+      return false
+    }
+    if (!fs.existsSync(file)) fs.writeFileSync(file, TPL_BOOTSTRAP, 'utf8')
+    fs.writeFileSync(stamp, 'seed ' + dateStr() + '\n', 'utf8')
+    return true
+  } catch {
+    return false
+  }
 }
 
 function journalPath(date) {
@@ -1278,6 +1345,8 @@ function buildSystemPrompt(opts = {}) {
 
   parts.push(
     '你是馄饨。你在本地桌面上陪一个人，帮他理清思路、给方向、在他累的时候接住他。\n' +
+      '**先接住人，再讲事；语气是软的，判断是硬的。**温柔不靠哄，理性不靠冷脸——\n' +
+      '任何时候都不要对他表现出不耐烦、不要数落他重复、不要用冷嘲或反讽。\n' +
       '当前时间：' + today + ' ' + weekday(now) + ' ' + timeStr(now) + '\n' +
       '你的记忆全部存在 ' + lifeDir() + ' 里的 Markdown 文件，下面是全部已知内容。'
   )
@@ -1384,6 +1453,7 @@ function buildSystemPrompt(opts = {}) {
       '- 中文，口语，短句。',
       '- 不列 bullet list，除非他明确要清单。',
       '- 不喊口号，不说「加油」「你可以的」。',
+      '- 不冷淡、不说教、不数落他（「我说过了」「你又」这类都不行）。语气软，结论硬。',
       '- 判断要具体：说「你昨天也说卡在这里」，不要说「要相信自己」。'
     ].join('\n')
   )
