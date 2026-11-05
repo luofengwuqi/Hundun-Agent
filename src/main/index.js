@@ -3,6 +3,7 @@ const path = require('path')
 const fs = require('fs')
 
 const store = require('./store')
+const models = require('./models')
 const life = require('./life')
 const conversation = require('./conversation')
 const llm = require('./llm')
@@ -240,6 +241,40 @@ function registerIpc() {
     }
   })
 
+  /**
+   * 卡片上的动作：置顶／上移／下移／移除／加入。
+   *
+   * 只改对象、不写盘 —— 结果回给界面，由界面走「预览 → 应用」那条老路。
+   * 这样编辑器里还没应用的草稿不会被这里的操作悄悄吞掉。
+   */
+  ipcMain.handle('cfg:modelEdit', (_e, payload) => {
+    const { config, op, ref, to } = payload || {}
+    let obj
+    try {
+      obj = typeof config === 'string' ? JSON.parse(config) : config
+    } catch (e) {
+      return { ok: false, error: jsonError(config, e) }
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      return { ok: false, error: '这份配置不是一个对象' }
+    }
+
+    let r
+    if (op === 'move') r = models.moveModel(obj, ref, to)
+    else if (op === 'add') r = models.addModel(obj, ref)
+    else if (op === 'remove') r = models.removeModel(obj, ref)
+    else return { ok: false, error: '不认识的操作：' + op }
+    if (!r.ok) return r
+
+    const pv = store.previewModel(r.config)
+    // 加入一个配置里根本没有的模型时，会被解析层当成「引用不到」直接跳过 ——
+    // 那会变成一次静默的无效操作，所以在这里明说。
+    if (op === 'add' && !pv.chain.some((c) => c.providerId + '/' + c.modelId === ref)) {
+      return { ok: false, error: '配置里没有这个模型：' + ref }
+    }
+    return { ok: true, config: r.config, errors: pv.errors, warnings: pv.warnings }
+  })
+
   /** 从磁盘挑一个 json / jsonc 读成文本。不猜编码，不修内容，原样交给编辑器。 */
   ipcMain.handle('cfg:pickModelFile', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {
@@ -276,6 +311,8 @@ function registerIpc() {
   })
 
   ipcMain.handle('life:open', () => shell.openPath(life.lifeDir()))
+  // 直接打开 RULES.md：光会「打开目录」不够，他得知道该改哪个文件、改完就生效
+  ipcMain.handle('life:openRules', () => shell.openPath(path.join(life.lifeDir(), 'RULES.md')))
   ipcMain.handle('life:search', async (_e, { q, limit }) => {
     try {
       return { ok: true, hits: await search.search(q, limit || 20) }
@@ -310,7 +347,9 @@ function registerIpc() {
       const result = await conversation.send(content, {
         internal,
         onDelta: (d) => event.sender.send('chat:delta', d),
-        onCompact: (info) => event.sender.send('chat:compacted', info)
+        onCompact: (info) => event.sender.send('chat:compacted', info),
+        // 换了模型要说出来。悄悄换掉的话，他会以为这句还是原来那个说的。
+        onFallback: (info) => event.sender.send('chat:fallback', info)
       })
       return result
     } catch (e) {

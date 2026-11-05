@@ -1,3 +1,6 @@
+const fs = require('fs')
+const path = require('path')
+const paths = require('./paths')
 const life = require('./life')
 const store = require('./store')
 const llm = require('./llm')
@@ -11,32 +14,114 @@ const { parseBlocks, groupNotes } = require('./blocks')
  * 设计要点：历史存在主进程，渲染进程只是视图。
  * 因为"压缩前先落盘记忆"必须能看到完整历史，放在渲染层会拿不到。
  *
- * 注意：这里的 history / summary / busy 是**进程级单值**，不分身份。
- * 切换身份时必须调 resetSession()（清空 + 代次 +1），
+ * 会话会落盘（D074）：`<身份目录>/.session.json`，存 history + 压缩摘要。
+ * 它和 `chat/*.md` 是两件事，别混：
+ *   - chat/ 留"他说过的原话"，只写不读（D028），给以后回查和检索；
+ *   - .session.json 存"这一轮要接着聊的上下文"，给重启之后接得上。
+ *
+ * 内存里 history / summary / busy 仍然是单值，不分身份。
+ * 切换身份必须走 resetSession()：清空 + 代次 +1 + 按新身份重新加载，
  * 否则两个身份的对话会接在一起（F13-06）。
  */
 
 const KEEP_AFTER_COMPACT = 6
+const SESSION_FILE = '.session.json'
+// 恢复上限：文件里最多留 80 条，读回来最多 60 条。正常聊天根本到不了，
+// 能到就是文件被人塞过东西，宁可少接一段也不要一次把上下文撑爆。
+const RESTORE_LIMIT = 60
+const SUMMARY_MAX = 12000
 
 let history = []
 let summary = ''
 let busy = false
 
-/** 手动清空当前身份的会话（不动代次：身份没变） */
-function reset() {
-  history = []
-  summary = ''
+function sessionFile() {
+  return path.join(life.lifeDir(), SESSION_FILE)
 }
 
 /**
- * 切身份时调这个。三样都要清，并且把代次推一格——
+ * 落盘。先写 .tmp 再 rename —— rename 是原子的，进程被 kill 也只会
+ * 留一个 .tmp，不会留下半截 JSON 让下次启动把整段会话丢掉。
+ *
+ * 写失败一律吞掉：落盘只决定"下次还接不接得上"，不能因为它失败就没收这一轮的回复。
+ */
+function saveSession() {
+  const ctx = paths.context()
+  const body = {
+    version: 1,
+    user: ctx.userId,
+    agent: ctx.agentId,
+    updatedAt: new Date().toISOString(),
+    summary,
+    history: history.slice(-80)
+  }
+  try {
+    const file = sessionFile()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const tmp = file + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(body, null, 2), 'utf8')
+    fs.renameSync(tmp, file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 读回来。三种情况一律当"没有会话"：文件不在、JSON 坏了、身份对不上。
+ *
+ * 第三条是重点。目录本来就按身份分，理论上串不了；但迁移、手动拷贝、
+ * 从别人机器上搬一整个 ~/life 过来，都能让一个 .session.json 出现在错误的目录里。
+ * 宁可丢一段上下文，也不能让 A 的话进 B 的上下文 —— F13-06 只是换了个入口。
+ */
+function loadSession() {
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(sessionFile(), 'utf8'))
+  } catch {
+    return { loaded: false }
+  }
+  if (!data || typeof data !== 'object') return { loaded: false }
+
+  const ctx = paths.context()
+  if (data.user && data.user !== ctx.userId) return { loaded: false, mismatch: true }
+  if (data.agent && data.agent !== ctx.agentId) return { loaded: false, mismatch: true }
+
+  const rows = Array.isArray(data.history) ? data.history : []
+  history = rows
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content)
+    .slice(-RESTORE_LIMIT)
+    .map((m) => ({ role: m.role, content: m.content }))
+  summary = typeof data.summary === 'string' ? data.summary.slice(-SUMMARY_MAX) : ''
+  return { loaded: true, count: history.length, hasSummary: Boolean(summary) }
+}
+
+function clearSessionFile() {
+  try {
+    fs.rmSync(sessionFile(), { force: true })
+  } catch {}
+}
+
+/** 手动清空当前身份的会话（不动代次：身份没变）。磁盘上那份也要删，否则重启就复活了。 */
+function reset() {
+  history = []
+  summary = ''
+  clearSessionFile()
+}
+
+/**
+ * 切身份时调这个。四样都要做，并且把代次推一格——
  * 已经在飞的请求回来时会发现代次变了，于是整个丢弃（见 session.js）。
+ *
+ * 复位之后立刻按新身份加载：重启接得上、切回来也接得上，
+ * 而"接得上"和"串味"只隔着一个 setContext 的先后顺序，所以顺序写死在这里。
  */
 function resetSession() {
   history = []
   summary = ''
   busy = false
   session.bump()
+  return loadSession()
 }
 
 function state() {
@@ -176,11 +261,17 @@ async function send(text, hooks = {}) {
     let acc = ''
     const streamed = await llm.streamChat(
       {
+        // 按设置里排好的顺序试。只有一个模型时它就是单元素，行为和以前一样。
+        chain: cfg.modelChain,
         baseUrl: cfg.baseUrl,
         apiKey: cfg.apiKey,
         model: cfg.model,
         temperature: cfg.temperature,
-        messages
+        messages,
+        // 换过模型要说一声：不然他会以为这句话还是原来那个说的
+        onFallback: (info) => {
+          if (!session.isStale(myEpoch) && hooks.onFallback) hooks.onFallback(info)
+        }
       },
       (d) => {
         acc += d
@@ -212,8 +303,14 @@ async function send(text, hooks = {}) {
   } finally {
     // 只清自己那一代的锁。身份已经换过的话，这把锁现在属于下一个请求，
     // 在这里清掉会让两个请求同时跑（同一个「不报错只是行为错」的坑）。
-    if (!session.isStale(myEpoch)) busy = false
+    //
+    // 落盘也守同一道代次：正在飞的请求切了身份，这份 history 属于上一个身份，
+    // 写下去就是把人 A 的话存进 B 的会话文件——比丢一段上下文糟得多。
+    if (!session.isStale(myEpoch)) {
+      busy = false
+      saveSession()
+    }
   }
 }
 
-module.exports = { send, reset, resetSession, state, parseBlocks, persistNotes }
+module.exports = { send, reset, resetSession, state, parseBlocks, persistNotes, saveSession, loadSession, sessionFile }

@@ -20,7 +20,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
 const DEV = path.join(ROOT, '.dev')
 const TMP = path.join(DEV, 'e2e')
-const PORT = 8787
+// 端口可覆盖：8787 是默认值，撞了就用 HUNDUN_E2E_PORT 换一个。
+// 写死端口的下场是「上次的进程没退干净 → 这次的假服务起不来 → 报的错跟被测代码毫无关系」。
+const PORT = Number(process.env.HUNDUN_E2E_PORT || 8787)
+const BASE = 'http://127.0.0.1:' + PORT + '/v1'
 
 /* ---------- 自己拉起假模型服务（不依赖外部先启动） ---------- */
 
@@ -141,7 +144,7 @@ fs.mkdirSync(path.join(TMP, 'config'), { recursive: true })
 fs.writeFileSync(
   path.join(TMP, 'config/config.json'),
   JSON.stringify({
-    baseUrl: 'http://127.0.0.1:8787/v1',
+    baseUrl: BASE,
     apiKey: 'test-key',
     model: 'mock',
     temperature: 0.7,
@@ -165,7 +168,7 @@ console.log('\n[e2e] 流式解析')
 let deltas = 0
 const text = await llm.streamChat(
   {
-    baseUrl: 'http://127.0.0.1:8787/v1',
+    baseUrl: BASE,
     apiKey: 'test-key',
     model: 'mock',
     messages: [{ role: 'user', content: '开始对话' }]

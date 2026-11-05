@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
-const { app } = require('electron')
 const models = require('./models')
+const paths = require('./paths')
 
 const DEFAULTS = {
   baseUrl: 'https://api.deepseek.com/v1',
@@ -32,12 +32,67 @@ const DEFAULTS = {
 
 let cache = null
 
+/**
+ * 配置和记忆放同一个根目录（D073）：
+ *
+ *   ~/life/config.json
+ *   ~/life/users/<用户>/agents/<agent>/*
+ *
+ * 不再放 userData（Linux 上是 ~/.config/HundunAgent/）。理由不是洁癖：
+ * 备份、迁移、手动改都只需要记住一个路径；而 userData 里还混着 Chromium 的缓存，
+ * 「把 ~/.config 打包」和「把记忆打包」是两件完全不同的事，混在一起迟早有人搞错。
+ *
+ * HUNDUN_CONFIG_DIR 仍然优先（测试用），它给的是一个**目录**。
+ */
 function configPath() {
-  const base = process.env.HUNDUN_CONFIG_DIR || app.getPath('userData')
+  const base = process.env.HUNDUN_CONFIG_DIR || paths.lifeRoot()
   return path.join(base, 'config.json')
 }
 
-/** {file:~/.secrets/key} 里的相对路径按配置文件所在目录算，和 opencode 一致。 */
+/** 老位置。只有真要迁移时才去问 Electron，平时 store 不该依赖它。 */
+function legacyConfigPath() {
+  try {
+    const { app } = require('electron')
+    if (!app || typeof app.getPath !== 'function') return null
+    return path.join(app.getPath('userData'), 'config.json')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 一次性搬家：新位置没有、老位置有，就复制过去。
+ *
+ * 老文件改名成 config.json.migrated 而不是删掉——配置里有 API Key，
+ * 迁移要是搬错了（比如 profile 不同），至少还能捞回来。
+ *
+ * 复制而不是 rename：跨设备 / 跨挂载点 rename 会抛 EXDEV。
+ */
+function migrateConfig() {
+  if (process.env.HUNDUN_CONFIG_DIR) return false // 测试目录不做迁移，别把真配置搬进沙箱
+  const to = configPath()
+  if (fs.existsSync(to)) return false
+  const from = legacyConfigPath()
+  if (!from || !fs.existsSync(from)) return false
+  try {
+    fs.mkdirSync(path.dirname(to), { recursive: true })
+    fs.copyFileSync(from, to)
+    try {
+      fs.chmodSync(to, 0o600)
+    } catch {}
+    try {
+      fs.renameSync(from, from + '.migrated')
+    } catch {}
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * {file:~/.secrets/key} 里的相对路径按配置文件所在目录算，和 opencode 一致。
+ * 配置文件搬进 ~/life 之后（D073），相对路径也跟着以 ~/life 为基准。
+ */
 function modelOpts() {
   return { baseDir: path.dirname(configPath()) }
 }
@@ -70,6 +125,7 @@ function assertModel(cfg) {
 function withDerivedModel(state) {
   if (!state.modelConfig) {
     state.modelBroken = false
+    state.modelChain = []
     return state
   }
   const r = models.resolve(state, modelOpts())
@@ -78,11 +134,13 @@ function withDerivedModel(state) {
     state.apiKey = r.apiKey
     state.model = r.model
     if (r.contextWindow > 0) state.contextWindow = r.contextWindow
+    state.modelChain = r.chain
     state.modelBroken = false
   } else {
     state.baseUrl = ''
     state.apiKey = ''
     state.model = ''
+    state.modelChain = []
     state.modelBroken = true
   }
   return state
@@ -90,6 +148,7 @@ function withDerivedModel(state) {
 
 function read() {
   if (cache) return cache
+  migrateConfig()
   let state
   try {
     const raw = fs.readFileSync(configPath(), 'utf8')
@@ -113,6 +172,9 @@ function persistable(cfg) {
   const out = { ...cfg }
   delete out.modelBroken
   delete out.hasApiKey
+  // modelChain 和上面几个一样是派生值：它是「按顺序试」的那条名单，
+  // 写进文件就等于把配置抄了第二份。
+  delete out.modelChain
   if (out.modelConfig) {
     delete out.baseUrl
     delete out.apiKey
@@ -187,6 +249,8 @@ module.exports = {
   todayStr,
   isQuietToday,
   toggleQuiet,
+  configFile: configPath,
+  migrateConfig,
   DEFAULTS,
   _reset
 }

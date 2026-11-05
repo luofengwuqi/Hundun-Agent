@@ -50,6 +50,7 @@ ok(LIFE === path.join(TMP, 'users', 'local', 'agents', 'hundun'), '记忆目录�
 for (const f of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'COMMITMENTS.md']) {
   ok(fs.existsSync(path.join(LIFE, f)), '初始化生成 ' + f)
 }
+ok(fs.existsSync(path.join(LIFE, 'RULES.md')), '初始化生成 RULES.md（他自己写的规矩）')
 ok(fs.existsSync(path.join(LIFE, 'memory')), '初始化生成 memory/ 目录')
 const todayFile = path.join(LIFE, 'memory', life.dateStr() + '.md')
 ok(fs.existsSync(todayFile), '生成今天的日记文件')
@@ -65,6 +66,31 @@ ok(prompt.includes('记忆规则'), '提示里包含记忆规则')
 ok(prompt.includes('<longterm>'), '提示声明了 longterm 块')
 ok(prompt.includes('把 USER.md 填起来'), '档案为空时注入访谈指令')
 ok(prompt.includes(life.dateStr()), '提示里带上了今天日期')
+
+/* ---------------- 1a. RULES.md：他自己写的规矩 ---------------- */
+
+console.log('\n[1a] RULES.md：能改判断，改不了协议')
+
+const rulesPath = path.join(LIFE, 'RULES.md')
+const rulesSeed = fs.readFileSync(rulesPath, 'utf8')
+
+ok(!prompt.includes('他亲手写的规矩'), 'RULES.md 空着时一个字都不占上下文')
+ok(life.rulesText() === '', '只有标题和引用的模板算「没写东西」')
+
+fs.writeFileSync(rulesPath, '# RULES.md\n\n> 一段说明\n\n## 我的规矩\n\n', 'utf8')
+ok(life.rulesText() === '', '只留标题和引用时仍然算空，不把说明当规矩喂进去')
+
+fs.writeFileSync(rulesPath, '# RULES.md\n\n## 我的规矩\n\n- 别叫我老板，叫名字\n', 'utf8')
+const pRules = life.buildSystemPrompt({})
+ok(pRules.includes('别叫我老板'), 'RULES.md 写了就进上下文')
+ok(
+  pRules.indexOf('别叫我老板') < pRules.indexOf('=== 记忆规则 ==='),
+  'RULES 排在记忆规则之前——能改判断，改不了块格式',
+  String(pRules.indexOf('别叫我老板')) + ' / ' + String(pRules.indexOf('=== 记忆规则 ==='))
+)
+ok(pRules.includes('<commit>'), '协议部分照旧在，没有被 RULES 挤掉')
+
+fs.writeFileSync(rulesPath, rulesSeed, 'utf8')
 
 /* ---------------- 1b. 约定表 ---------------- */
 
@@ -419,10 +445,168 @@ paths.setContext({ userId: 'local', agentId: 'hundun' })
 life.ensureLife()
 conversation.resetSession()
 
-// 收尾：切回本节开始时的身份，否则后面检索那节会在 222 的目录里找 111 的东西
+/* ---------------- 3d. 会话落盘（D074） ---------------- */
+
+console.log('\n[3d] 会话落盘：重启接得上，身份不串味')
+
+const STMP = path.join(ROOT, '.dev/test-session')
+fs.rmSync(STMP, { recursive: true, force: true })
+process.env.HUNDUN_CONFIG_DIR = path.join(STMP, 'config')
+store._reset()
+store.write({ apiKey: 'test-key', baseUrl: 'http://127.0.0.1:1/v1', model: 'test' })
+
+llm.streamChat = async (opts, onDelta) => {
+  const text = '记下了。'
+  onDelta && onDelta(text)
+  return text
+}
+searchMod.search = async () => []
+
 paths.setContext({ userId: 'local', agentId: 'hundun' })
 life.ensureLife()
 conversation.resetSession()
+
+await conversation.send('第一句')
+ok(conversation.state().history.length === 2, '一轮对话两条：他一句、它一句', String(conversation.state().history.length))
+ok(fs.existsSync(conversation.sessionFile()), '会话落盘到 .session.json')
+
+// 重启 = 内存清空 + 按同一身份重新加载（启动走的就是这一条）
+const restored = conversation.resetSession()
+ok(restored && restored.loaded === true, '重启时能读回会话文件')
+ok(
+  conversation.state().history.length === 2 && conversation.state().history[0].content === '第一句',
+  '重启后历史接得上',
+  JSON.stringify(conversation.state().history)
+)
+
+// 压缩摘要是会话的一部分，不是记忆的一部分，必须一起回来
+fs.writeFileSync(
+  conversation.sessionFile(),
+  JSON.stringify({
+    version: 1,
+    user: 'local',
+    agent: 'hundun',
+    summary: '他在做后端，卡在部署',
+    history: [
+      { role: 'user', content: '嗯' },
+      { role: 'assistant', content: '嗯。' }
+    ]
+  }),
+  'utf8'
+)
+conversation.resetSession()
+ok(conversation.state().summary === '他在做后端，卡在部署', '压缩摘要也恢复')
+ok(conversation.state().history.length === 2, '摘要对应的历史一起回来')
+
+// 身份隔离：换个身份，读不到上一个人的会话
+paths.setContext({ userId: 'other', agentId: 'hundun' })
+life.ensureLife()
+const otherLoad = conversation.resetSession()
+ok(otherLoad.loaded === false && conversation.state().history.length === 0, '切到另一个身份，读不到上一个身份的会话')
+
+// 文件里写的身份对不上就整份不认（迁移、手动拷贝都能造成这种局面）
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+fs.writeFileSync(
+  conversation.sessionFile(),
+  JSON.stringify({ version: 1, user: 'stranger', agent: 'hundun', history: [{ role: 'user', content: '别人的话' }] }),
+  'utf8'
+)
+const mismatch = conversation.resetSession()
+ok(mismatch.mismatch === true && conversation.state().history.length === 0, '会话文件里的身份对不上就整份不认')
+
+// 坏文件不许崩：手改过、写到一半断电都会造成这种局面
+fs.writeFileSync(conversation.sessionFile(), '{ 这不是 JSON', 'utf8')
+let threwLoad = false
+let brokenLoad = null
+try {
+  brokenLoad = conversation.resetSession()
+} catch {
+  threwLoad = true
+}
+ok(!threwLoad && brokenLoad.loaded === false && conversation.state().history.length === 0, '会话文件坏了不崩，当没有会话')
+
+// 手动清空要连磁盘一起清，否则重启就复活
+fs.writeFileSync(conversation.sessionFile(), '{}', 'utf8')
+conversation.reset()
+ok(!fs.existsSync(conversation.sessionFile()), '手动清空会话时磁盘那份也删掉')
+
+// 最要紧的一条：正在飞的请求被切了身份，会话不能落到新身份头上
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
+llm.streamChat = async (opts, onDelta) => {
+  await new Promise((r) => setTimeout(r, 40))
+  const text = '这句话属于上一个人'
+  onDelta && onDelta(text)
+  return text
+}
+const pendingSession = conversation.send('属于 A 的话')
+paths.setContext({ userId: 'other', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
+const droppedSession = await pendingSession
+ok(droppedSession && droppedSession.dropped === true, '切身份后旧请求被丢弃')
+ok(!fs.existsSync(conversation.sessionFile()), '旧身份的会话没有写进新身份的 .session.json')
+
+llm.streamChat = realStream
+searchMod.search = realSearch
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+conversation.resetSession()
+
+// 恢复配置目录，后面的用例还要用它
+process.env.HUNDUN_CONFIG_DIR = path.join(TMP, 'config')
+store._reset()
+
+/* ---------------- 3e. 配置文件位置（D073） ---------------- */
+
+console.log('\n[3e] 配置：和记忆放在同一个文件夹')
+
+const CFGHOME = path.join(ROOT, '.dev/test-config-home')
+fs.rmSync(CFGHOME, { recursive: true, force: true })
+process.env.HUNDUN_LIFE_DIR = CFGHOME
+delete process.env.HUNDUN_CONFIG_DIR
+store._reset()
+store.write({ quietDate: '2026-01-01' })
+ok(fs.existsSync(path.join(CFGHOME, 'config.json')), 'config.json 默认落在 ~/life 根上，不在 userData 里')
+ok(!fs.existsSync(path.join(CFGHOME, 'users')), '写配置不会顺手建身份目录')
+
+// 老位置的配置要自己搬过来（升级的用户不能丢 key）
+const LEGACY = path.join(ROOT, '.dev/test-legacy-cfg', 'HundunAgent')
+fs.rmSync(path.dirname(LEGACY), { recursive: true, force: true })
+fs.mkdirSync(LEGACY, { recursive: true })
+fs.writeFileSync(path.join(LEGACY, 'config.json'), JSON.stringify({ quietDate: '2026-02-02' }), 'utf8')
+
+const ep = require.resolve('electron')
+const prevElectron = require.cache[ep]
+require.cache[ep] = { id: ep, filename: ep, loaded: true, exports: { app: { getPath: () => LEGACY } } }
+
+const MIG = path.join(ROOT, '.dev/test-config-migrate')
+fs.rmSync(MIG, { recursive: true, force: true })
+process.env.HUNDUN_LIFE_DIR = MIG
+store._reset()
+const migrated = store.read()
+ok(fs.existsSync(path.join(MIG, 'config.json')), '老配置自动搬进 ~/life/config.json')
+ok(migrated.quietDate === '2026-02-02', '搬过来的内容没丢')
+ok(
+  (fs.statSync(path.join(MIG, 'config.json')).mode & 0o777) === 0o600,
+  '搬家后权限仍是 0600（里面有 key）',
+  (fs.statSync(path.join(MIG, 'config.json')).mode & 0o777).toString(8)
+)
+ok(fs.existsSync(path.join(LEGACY, 'config.json.migrated')), '老文件改名留档，不是直接删')
+
+if (prevElectron) require.cache[ep] = prevElectron
+else delete require.cache[ep]
+
+// 已经有了就不许再搬：新配置是准的，老文件是旧的
+store.write({ quietDate: '2026-03-03' })
+store._reset()
+ok(store.read().quietDate === '2026-03-03', '新配置存在时不会被老文件覆盖')
+
+process.env.HUNDUN_LIFE_DIR = TMP
+process.env.HUNDUN_CONFIG_DIR = path.join(TMP, 'config')
+store._reset()
 
 /* ---------------- 3b. 打扰参数落库（P-11 / F06-16） ---------------- */
 
@@ -560,10 +744,207 @@ ok(legacyCfg.modelConfig === null, '老配置没有 modelConfig，先用着原�
 ok(legacyCfg.baseUrl === 'https://api.moonshot.cn/v1', '老配置照常能用，不因为升级就断了')
 const mcSeed = store.publicConfig().modelSeed
 ok(mcSeed && mcSeed.provider && mcSeed.provider.moonshot, '界面能拿到一份等价的 JSON 做起点', JSON.stringify(mcSeed).slice(0, 100))
-ok(mcSeed.model === 'moonshot/kimi-k2', 'mcSeed 里的 model 指向老配置那个模型')
-ok(mcSeed.provider.moonshot.options.apiKey === 'sk-old', 'mcSeed 把老 key 带过来了，他不用重填')
+ok(mcSeed.model === 'moonshot/kimi-k2', 'seed 里的 model 指向老配置那个模型')
+ok(mcSeed.provider.moonshot.options.apiKey === 'sk-old', 'seed 把老 key 带过来了，他不用重填')
 
 // 收尾：留一份能用的配置，别把坏状态带给后面的界面测试
+store.write({ modelConfig: MODEL_OK })
+
+console.log('\n[3d] 多个模型：一条链，按顺序试')
+
+const CHAIN_CFG = {
+  provider: {
+    main: {
+      name: '主服务商',
+      options: { baseURL: 'https://a.example/v1', apiKey: 'ka' },
+      models: {
+        big: { name: 'Big', limit: { context: 64000 } },
+        small: { name: 'Small' }
+      }
+    },
+    backup: {
+      name: '备用',
+      options: { baseURL: 'https://b.example/v1', apiKey: 'kb' },
+      models: {
+        mid: { name: 'Mid', limit: { context: 32000 } },
+        lite: { name: 'Lite' }
+      }
+    }
+  },
+  model: 'main/big',
+  'x-hundun': { modelOrder: ['main/big', 'backup/mid', 'main/small'] }
+}
+
+const c3 = mm.normalize(CHAIN_CFG)
+ok(c3.ok, '多模型配置能解析', c3.errors.join('；'))
+ok(c3.chain.length === 3, '链上三个模型')
+ok(
+  c3.chain.map((m) => m.modelId).join(',') === 'big,mid,small',
+  '顺序与 modelOrder 完全一致',
+  c3.chain.map((m) => m.modelId).join(',')
+)
+ok(c3.chain[1].baseUrl === 'https://b.example/v1', '每个模型带着自己的地址（跨服务商也能排）')
+ok(c3.chain[1].apiKey === 'kb', '每个模型带着自己的 key')
+ok(c3.selected.modelId === 'big', '第一个就是当前用的那个')
+
+// 手改顶层 model 必须立刻生效，不能被顺序里的旧值压住 ——
+// 否则就是「改了没反应」，而且没有任何报错。
+const c4 = mm.normalize({ ...CHAIN_CFG, model: 'backup/mid' })
+ok(c4.chain[0].modelId === 'mid', '手改顶层 model 就换了首选')
+ok(c4.chain.length === 3, '其余备用一个不少')
+
+// 引用不到的那一项只丢自己，不连坐整份配置
+const c5 = mm.normalize({
+  ...CHAIN_CFG,
+  'x-hundun': { modelOrder: ['main/big', 'ghost/x', 'backup/mid'] }
+})
+ok(c5.ok, '顺序里有找不到的模型时，配置照样可用')
+ok(c5.chain.length === 2, '那一项被跳过')
+ok(
+  c5.warnings.some((w) => w.includes('ghost/x')),
+  '跳过了要说出是哪一个',
+  c5.warnings.join('；')
+)
+
+const c6 = mm.normalize({ ...CHAIN_CFG, 'x-hundun': { modelOrder: ['main/big', 'main/big', 'backup/mid'] } })
+ok(c6.chain.length === 2, '顺序里重复的只留一个')
+
+// 没有 x-hundun 的老配置：就是单元素链，行为与以前完全一样
+const c7 = mm.normalize({
+  provider: { solo: { options: { baseURL: 'https://s.example/v1' }, models: { one: { name: 'One' } } } },
+  model: 'solo/one'
+})
+ok(c7.chain.length === 1, '只有 model 没有顺序时，链上就一个')
+
+// ---- 排序／增删（纯函数，不碰磁盘）----
+
+const movedTop = mm.moveModel(CHAIN_CFG, 'main/small', 0)
+ok(movedTop.ok && mm.orderOf(movedTop.config)[0] === 'main/small', '移到第一位就是设为首选')
+ok(movedTop.config.model === 'main/small', '顶层 model 跟着改（opencode 那边也认）')
+ok(movedTop.config['x-hundun'].modelOrder.length === 3, '数量不变，只是换了位置')
+
+const movedDown = mm.moveModel(CHAIN_CFG, 'main/big', 1)
+ok(movedDown.ok && mm.orderOf(movedDown.config).join(',') === 'backup/mid,main/big,main/small', '下移一格')
+
+const clamped = mm.moveModel(CHAIN_CFG, 'backup/mid', 99)
+ok(clamped.ok && mm.orderOf(clamped.config).length === 3, '拖到列表外面不会越界或丢东西')
+
+const mcAdded = mm.addModel(CHAIN_CFG, 'backup/lite')
+ok(mcAdded.ok, '加一个还没进链的模型')
+ok(mm.orderOf(mcAdded.config).slice(-1)[0] === 'backup/lite', '加进来的排在最后（先试原来的）')
+ok(mcAdded.config.model === 'main/big', '加备用不会抢走首选')
+
+ok(!mm.addModel(CHAIN_CFG, 'main/big').ok, '已经在链里的不会重复加')
+
+const mcRemoved = mm.removeModel(CHAIN_CFG, 'main/small')
+ok(mcRemoved.ok && mm.orderOf(mcRemoved.config).length === 2, '移除一个')
+ok(!mm.removeModel(CHAIN_CFG, 'nope/x').ok, '移除不存在的会说不行')
+
+const mcOnlyOne = {
+  provider: { solo: { options: { baseURL: 'https://s.example/v1' }, models: { one: {} } } },
+  model: 'solo/one'
+}
+ok(!mm.removeModel(mcOnlyOne, 'solo/one').ok, '删到最后一个会被拦下（留一个用来说话）')
+
+// orderOf 与 normalize 必须同源，否则卡片上看到的顺序和实际请求的顺序会不一样
+ok(mm.orderOf(CHAIN_CFG).join(',') === c3.chain.map((m) => m.providerId + '/' + m.modelId).join(','), '卡片顺序 = 解析出来的链顺序')
+
+// ---- store：链是派生的，不落盘 ----
+
+store.write({ modelConfig: CHAIN_CFG })
+ok(store.read().model === 'big', 'baseUrl 之外，model 也还是从 JSON 派生')
+ok(store.read().modelChain.length === 3, 'store 派生出整条链')
+ok(store.read().modelChain[1].modelId === 'mid', '第二条是备用那个')
+const diskChain = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+ok(!('modelChain' in diskChain), '链不落盘：它是派生值，写进文件就成了第二份事实', Object.keys(diskChain).join(','))
+ok(
+  diskChain.modelConfig['x-hundun'].modelOrder.length === 3,
+  '但顺序本身在 JSON 里（那才是源）'
+)
+
+// ---- llm：什么时候允许换下一个 ----
+
+const ch2 = llm.chainOf({ chain: store.read().modelChain })
+ok(ch2.length === 3, 'llm 拿到的是整条链')
+ok(ch2[0].model === 'big' && ch2[0].label === 'Big', '模型 id 用真名，显示用 name')
+ok(ch2[1].baseUrl === 'https://b.example/v1', '第二个用的是自己的地址')
+
+const fakeChain = [
+  { model: 'big', label: 'Big' },
+  { model: 'mid', label: 'Mid' }
+]
+
+const triedOrder = []
+let fbInfo = null
+const mcGot = await llm.runChain(
+  fakeChain,
+  async (one, markStarted) => {
+    triedOrder.push(one.model)
+    if (one.model === 'big') throw new Error('503 服务不可用')
+    markStarted()
+    return '备用回的'
+  },
+  (info) => (fbInfo = info)
+)
+ok(mcGot === '备用回的', '第一个失败时用第二个，返回第二个的话')
+ok(triedOrder.join(',') === 'big,mid', '试的顺序就是排的顺序')
+ok(
+  fbInfo && fbInfo.used.model === 'mid' && fbInfo.failed.length === 1,
+  '换过要说清楚：谁失败了、用的是谁',
+  JSON.stringify(fbInfo)
+)
+
+// 这条是整个链最要紧的一条：推过字就不能再换。
+// 换了会显示成两个模型的话拼一段，而接缝在哪没人看得出来。
+let attempts = 0
+let threwAfterStart = false
+try {
+  await llm.runChain(fakeChain, async (one, markStarted) => {
+    attempts++
+    markStarted()
+    throw new Error('说到一半断了')
+  })
+} catch {
+  threwAfterStart = true
+}
+ok(threwAfterStart, '推过字之后出错会直接抛，不吞掉')
+ok(attempts === 1, '推过字之后不再换模型', '实际尝试了 ' + attempts + ' 次')
+
+let allFailMsg = ''
+try {
+  await llm.runChain(fakeChain, async () => {
+    throw new Error('连不上')
+  })
+} catch (e) {
+  allFailMsg = e.message
+}
+ok(allFailMsg.includes('2 个模型'), '全都没成时说清楚试了几个', allFailMsg)
+
+let timeoutTries = 0
+try {
+  await llm.runChain(fakeChain, async () => {
+    timeoutTries++
+    const e = new Error('请求超时')
+    e.timeout = true
+    throw e
+  })
+} catch {}
+ok(timeoutTries === 1, '超时不再往下试（换地址大概率一样超时，只会更久）')
+
+// 只有一个模型时，整条链退化成老行为：一次尝试、一份错误
+let soloTries = 0
+let soloMsg = ''
+try {
+  await llm.runChain([{ model: 'only', label: 'Only' }], async () => {
+    soloTries++
+    throw new Error('401 没权限')
+  })
+} catch (e) {
+  soloMsg = e.message
+}
+ok(soloTries === 1 && soloMsg === '401 没权限', '单模型时错误原样抛出，不再包一层「试了几个」', soloMsg)
+
+// 收尾：留一份能用的单模型配置
 store.write({ modelConfig: MODEL_OK })
 
 console.log('\n[4] 界面：SSR 渲染')

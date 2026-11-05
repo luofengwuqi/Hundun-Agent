@@ -14,11 +14,14 @@ contextBridge.exposeInMainWorld('hundun', {
     // 模型配置：预览（不写）／应用（要么整份成功要么整份失败）／从磁盘导入
     previewModel: (text) => ipcRenderer.invoke('cfg:modelPreview', text),
     applyModel: (payload) => ipcRenderer.invoke('cfg:modelApply', payload),
-    pickModelFile: () => ipcRenderer.invoke('cfg:pickModelFile')
+    pickModelFile: () => ipcRenderer.invoke('cfg:pickModelFile'),
+    // 卡片上的排序／增删。只改对象不写盘，改完还要走 applyModel 才算数。
+    editModel: (payload) => ipcRenderer.invoke('cfg:modelEdit', payload)
   },
 
   life: {
     open: () => ipcRenderer.invoke('life:open'),
+    openRules: () => ipcRenderer.invoke('life:openRules'),
     search: (q, limit) => ipcRenderer.invoke('life:search', { q, limit }),
     reindex: () => ipcRenderer.invoke('life:reindex')
   },
@@ -30,7 +33,9 @@ contextBridge.exposeInMainWorld('hundun', {
     onDelta: (cb) => ipcRenderer.on('chat:delta', (_e, d) => cb(d)),
     onDone: (cb) => ipcRenderer.on('chat:done', (_e, d) => cb(d)),
     onError: (cb) => ipcRenderer.on('chat:error', (_e, d) => cb(d)),
-    onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, d) => cb(d))
+    onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, d) => cb(d)),
+    // 排在前面的模型没连上，换了后面那个
+    onFallback: (cb) => ipcRenderer.on('chat:fallback', (_e, d) => cb(d))
   },
 
   identity: {

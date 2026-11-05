@@ -51,6 +51,21 @@ const TPL_SOUL = `# SOUL.md — 馄饨是谁
 （暂无）
 `
 
+const TPL_RULES = `# RULES.md — 你写给馄饨的规矩
+
+> 这个文件归你。它每次开口之前都会把这里读一遍，和 SOUL.md 一起算数。
+> 改完保存就生效，不用重启，也不用告诉它。
+>
+> 能写什么：说话的分寸、什么该记什么别记、哪些话别主动提、
+> 什么时候别来烦你、你想让它怎么称呼你。写具体的，别写「对我好一点」。
+>
+> 不要改的：它认四种块 <memory> <longterm> <profile> <commit>，
+> 那是软件解析用的协议。规矩可以改，块的写法不要动。
+
+## 我的规矩
+
+`
+
 const TPL_IDENTITY = `# IDENTITY.md
 
 - 名字：馄饨
@@ -143,6 +158,7 @@ const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
 
 const SEEDS = {
   'SOUL.md': TPL_SOUL,
+  'RULES.md': TPL_RULES,
   'IDENTITY.md': TPL_IDENTITY,
   'USER.md': TPL_USER,
   'MEMORY.md': TPL_MEMORY,
@@ -659,9 +675,32 @@ function estimateTokens(text) {
 }
 
 /**
+ * RULES.md 里他自己写的规矩（D075）。
+ *
+ * 只有标题、引用（>）和空行时算"没写东西"，一个字都不进上下文。
+ * 不这么判的话，模板里那几行解释会被当成他的要求喂给模型——既费 token，
+ * 又可能被读成「每次都要提一遍块格式」。
+ *
+ * 反过来说：他写进去的每一行都算数，所以这里不做任何取舍、不改写、不摘要。
+ * 他手改的东西优先，这是这个软件的底线（和 COMMITMENTS.md 一样）。
+ */
+function rulesText() {
+  const txt = readSafe('RULES.md', 6000)
+  if (!txt.trim()) return ''
+  const rows = txt
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#') && !l.startsWith('>'))
+    .filter((l) => !/^[-*]\s*$/.test(l))
+  if (!rows.length) return ''
+  return txt.trim()
+}
+
+/**
  * 按 OpenClaw 的加载顺序拼 system prompt：
- * 规则 → SOUL → IDENTITY → USER → MEMORY → 昨天 → 今天
+ * 规则 → SOUL → IDENTITY → USER → MEMORY → 昨天 → 今天 → RULES → 记忆规则
  * 顺序有讲究：越靠前越"是身份"，越靠后越"是刚发生的事"。
+ * RULES.md 是他手写的，放在事实之后、协议之前——能改判断，不能改格式。
  */
 function buildSystemPrompt(opts = {}) {
   const summary = opts.summary || ''
@@ -696,6 +735,19 @@ function buildSystemPrompt(opts = {}) {
 
   if (summary) {
     parts.push('=== 本次对话此前的摘要（上下文曾压缩） ===\n' + summary)
+  }
+
+  // 他自己写的规矩放在最后一段「事实」之后、「记忆规则」之前：
+  // 靠后，是因为越靠后越像"此刻的要求"；在记忆规则之前，
+  // 是因为块的格式是协议，不能被任何一段话覆盖掉。
+  const rules = rulesText()
+  if (rules) {
+    parts.push(
+      '=== RULES.md（他亲手写的规矩） ===\n' +
+        rules +
+        '\n\n这些是他定的，照做。和上面默认的习惯冲突时以这里为准；' +
+        '但下面「记忆规则」里的块格式是软件解析用的，那部分是协议，不能改。'
+    )
   }
 
   parts.push(
@@ -783,6 +835,7 @@ module.exports = {
   DELIVERIES,
   buildSystemPrompt,
   estimateTokens,
+  rulesText,
   isProfileEmpty,
   dateStr,
   journalPath,

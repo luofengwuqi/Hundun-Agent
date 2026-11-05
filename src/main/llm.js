@@ -45,7 +45,10 @@ function post(urlStr, payload, apiKey) {
       try {
         req.abort()
       } catch {}
-      reject(new Error('请求超时（180 秒）。检查一下网络，或者接口地址填错了。'))
+      const err = new Error('请求超时（180 秒）。检查一下网络，或者接口地址填错了。')
+      // 超时不降级（见 streamChat）。标一下，让上层认得出是哪类失败。
+      err.timeout = true
+      reject(err)
     }, 180000)
 
     req.on('response', (res) => {
@@ -88,8 +91,8 @@ function prettyError(status, raw) {
   return '模型接口返回 ' + status + (msg ? '：' + String(msg).slice(0, 300) : '')
 }
 
-/** 流式对话；返回完整文本 */
-async function streamChat({ baseUrl, apiKey, model, messages, temperature = 0.7 }, onDelta) {
+/** 流式对话的一次尝试；返回完整文本 */
+async function streamOne({ baseUrl, apiKey, model, messages, temperature = 0.7 }, onDelta) {
   const { status, res } = await post(
     endpoint(baseUrl),
     { model, messages, temperature, stream: true },
@@ -143,8 +146,8 @@ async function streamChat({ baseUrl, apiKey, model, messages, temperature = 0.7 
   })
 }
 
-/** 非流式对话；压缩摘要、连通性测试用 */
-async function chat({ baseUrl, apiKey, model, messages, temperature = 0.3, maxTokens }) {
+/** 非流式对话的一次尝试；压缩摘要、连通性测试用 */
+async function chatOne({ baseUrl, apiKey, model, messages, temperature = 0.3, maxTokens }) {
   const payload = { model, messages, temperature, stream: false }
   if (maxTokens) payload.max_tokens = maxTokens
   const { status, res } = await post(endpoint(baseUrl), payload, apiKey)
@@ -161,6 +164,84 @@ async function chat({ baseUrl, apiKey, model, messages, temperature = 0.3, maxTo
   return { text: j.choices?.[0]?.message?.content || '', usage: j.usage || null }
 }
 
+/**
+ * 把 opts 归一成一条「先用谁、连不上再用谁」的链。
+ * 没给 chain 时就是单元素——老的调用点（比如测试连接）不用改。
+ */
+function chainOf(opts) {
+  if (Array.isArray(opts.chain) && opts.chain.length) {
+    return opts.chain.map((c) => ({
+      baseUrl: c.baseUrl,
+      apiKey: c.apiKey,
+      model: c.modelId || c.model,
+      label: c.modelName || c.modelId || c.model
+    }))
+  }
+  return [{ baseUrl: opts.baseUrl, apiKey: opts.apiKey, model: opts.model, label: opts.model }]
+}
+
+function combineFailures(failed) {
+  if (!failed.length) return new Error('没有可用的模型')
+  const last = failed[failed.length - 1]
+  if (failed.length === 1) return new Error(last.error)
+  return new Error(`试了 ${failed.length} 个模型都没成。最后一个是 ${last.model}：${last.error}`)
+}
+
+/**
+ * 按顺序跑 attempt，前一个失败才换下一个。
+ *
+ * 抽出来单独一层，是因为「什么时候可以换」这条规则只有一处能验证：
+ * 已经往界面上推过字之后再换，显示出来的会是两个模型的话拼成一段，
+ * 而接缝在哪没有任何人看得出来。这层不碰网络，测试能直接喂假的 attempt。
+ *
+ * attempt(one, markStarted) —— 推出第一个字符时必须调 markStarted()。
+ */
+async function runChain(chain, attempt, onFallback) {
+  const failed = []
+
+  for (let i = 0; i < chain.length; i++) {
+    const one = chain[i]
+    let started = false
+    try {
+      const out = await attempt(one, () => {
+        started = true
+      })
+      if (i > 0 && typeof onFallback === 'function') {
+        onFallback({ used: one, failed: failed.slice() })
+      }
+      return out
+    } catch (e) {
+      if (started) throw e
+      failed.push({ model: one.label || one.model, error: e.message })
+      // 超时不换：换一个地址大概率同样超时，代价是把「卡三分钟」变成「卡九分钟」。
+      if (e.timeout) throw new Error(`${one.label || one.model} 没响应：${e.message}`)
+    }
+  }
+  throw combineFailures(failed)
+}
+
+/**
+ * 流式对话。降级成功时会调 opts.onFallback。
+ * 不声不响地换了模型，他会以为还在跟原来那个说话。
+ */
+async function streamChat(opts, onDelta) {
+  const chain = chainOf(opts)
+  return runChain(
+    chain,
+    (one, markStarted) =>
+      streamOne({ ...opts, ...one }, (d) => {
+        markStarted()
+        onDelta && onDelta(d)
+      }),
+    opts.onFallback
+  )
+}
+
+/** 非流式同上。它没有「已经推过字」的问题。 */
+async function chat(opts) {
+  return runChain(chainOf(opts), (one) => chatOne({ ...opts, ...one }))
+}
+
 async function testConnection(cfg) {
   const { text } = await chat({
     ...cfg,
@@ -171,4 +252,4 @@ async function testConnection(cfg) {
   return text.trim() || '（返回为空）'
 }
 
-module.exports = { streamChat, chat, testConnection, endpoint }
+module.exports = { streamChat, chat, testConnection, endpoint, chainOf, runChain }

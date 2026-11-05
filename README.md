@@ -19,7 +19,7 @@
 - 窗口、托盘、流式对话、记忆块解析与落盘、本地检索、设置页——这些跑通过
 - **打扰（主动开口）那部分还是旧形态**：按钟点触发，不是按"你答应过的一件事"。整套要重写
 - **界面从未在真机确认过**，只有静态样张 `preview.html`
-- 完整规格与决策记录在 **`docs/prd/`**（PRD v0.16：72 条决策、F01–F14、126 条验收、实现计划 P-01～P-30）。**代码落后于规格**
+- 完整规格与决策记录在 **`docs/prd/`**（PRD v0.16：76 条决策、F01–F14、126 条验收、实现计划 P-01～P-34）。**代码落后于规格**
 - **一期只有一个用户、一个智能体**（D071）：登录、切换、群聊、QQ 接入整层属二期。身份目录 `~/life/users/<用户>/agents/<agent>/` 保留着，一期固定用默认身份，界面上看不到
 
 如果你是想找个能用的桌面 AI 助手，这里不合适。
@@ -45,7 +45,9 @@ node scripts/test-e2e.mjs   # 端到端自测（配 scripts/mock-llm.py 假模�
 
 ## 配置
 
-API Key、模型、温度存在系统 userData 目录的 `config.json`（权限 0600），**不在仓库里**。换机器要重新填。
+API Key、模型、温度存在 `~/life/config.json`（权限 0600），和记忆同一个根目录，**不在仓库里**。换机器要重新填。
+
+老版本把它放在系统的 userData 目录（Linux 上是 `~/.config/HundunAgent/`）。第一次启动会自动复制过来，老文件改名成 `config.json.migrated` 留着。`modelConfig` 里 `{file:相对路径}` 的相对路径，也改成以 `~/life/` 为基准。
 
 `.gitignore` 已排除 `node_modules/`、`out/`、`dist/`、`data/`、`*.db`、`.env*`、`config.json`、`*.key`。提交前不确定就先 `git status` 看一眼。
 
@@ -53,19 +55,38 @@ API Key、模型、温度存在系统 userData 目录的 `config.json`（权限 
 
 ## 目录
 
+仓库里是代码：
+
 ```
 src/main/         主进程
   index.js          窗口、托盘、IPC、调度
   conversation.js   一轮对话：拼上下文 → 调模型 → 解析记忆块 → 落盘
-  life.js           ~/life/ 读写、种子文件、日记追加
-  blocks.js         解析回复里的 <memory> / <longterm> / <profile>
+  life.js           ~/life/ 读写、种子文件、日记追加、system prompt 拼装
+  blocks.js         解析回复里的 <memory> / <longterm> / <profile> / <commit>
   search.js         检索（sql.js，带文件扫描兜底）
-  store.js          config.json
+  store.js          config.json（和记忆同根）
   llm.js            模型调用与流式
 src/renderer/     Vue 界面（单窗口、无路由）
 scripts/          构建（esbuild）、图标生成、测试脚手架
 docs/prd/         规格与决策记录（见下）
 ```
+
+运行时是用户的东西，全在 `~/life/` 里，不在仓库：
+
+```
+~/life/
+  config.json                        配置（0600），只有一份
+  users/<用户>/agents/<agent>/
+    SOUL.md  IDENTITY.md  USER.md  MEMORY.md
+    RULES.md                         你写的规矩，改完保存就生效
+    COMMITMENTS.md                   约定表（四列：什么事/到期日/结局/消息）
+    memory/YYYY-MM-DD.md             日记
+    chat/YYYY-MM-DD.md               原话，只写不读（D028）
+    .session.json                    会话上下文，重启接得上
+    .index/memory.sqlite             检索索引
+```
+
+一个身份一整套记忆，互不共享；配置只有一份，在根上。备份就是 `cp -r ~/life`，迁移就是把这个文件夹拷走。
 
 ## 文档
 
@@ -74,10 +95,10 @@ docs/prd/         规格与决策记录（见下）
 | 文件 | 是什么 |
 | --- | --- |
 | `00-CONTEXT.md` | 从哪读起。当前状态 + 历轮前情，换人换设备时先看这个 |
-| `02-DECISIONS-AND-QUESTIONS.md` | 72 条决策（D001–D072）与 27 个问题（全部已答）。**权威台账** |
+| `02-DECISIONS-AND-QUESTIONS.md` | 76 条决策（D001–D076）与 27 个问题（全部已答）。**权威台账** |
 | `03-PRD-DRAFT.md` | 产品需求：14 个功能模块、126 条可判定验收、追溯表 |
 | `04-INTERVIEW-LOG.md` | G01–G09 九轮访谈的**原话实录**。决策的来源都在这里 |
-| `05-DEV-PLAN.md` | 实施计划 P-01～P-29，含「不修就白做」的顺序理由 |
+| `05-DEV-PLAN.md` | 实施计划 P-01～P-34，含「不修就白做」的顺序理由 |
 
 `docs/对话记录/` 是立项期间的会话存档，其中 `原始记录.jsonl` 是完整的工具调用日志（3.1 MB），保留它是为了可回溯，不是为了阅读。
 

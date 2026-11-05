@@ -44,22 +44,143 @@ async function runPreview() {
 
 onMounted(runPreview)
 
+/**
+ * 角标跟着**编辑器里那份**走，不跟已保存的走。
+ *
+ * 它和下面第一张卡片必须说同一句话：他刚点了「先用」，卡片已经换成 R1 了，
+ * 角标还挂着 Chat，那到底是哪个在用？—— 这种不一致没法靠用户在界面上自己解释。
+ * 「改了还没生效」这件事用后缀说，不用两个不同的名字说。
+ */
 const inUseText = computed(() => {
   if (props.cfg.modelBroken) return '配置坏了'
+  // 用显示名而不是 model id：卡片上写「DeepSeek Chat」，角标写「deepseek-chat」
+  // 会让人以为这是两个东西。
+  const first = preview.value?.chain?.[0]
+  if (first) return first.modelName
+  const saved = props.cfg.modelChain && props.cfg.modelChain[0]
+  if (saved) return saved.modelName
   if (!props.cfg.model) return '还没选模型'
   return props.cfg.model
 })
+
+const badgeText = computed(() => inUseText.value + (dirty.value ? ' · 未应用' : ''))
 
 function fmtCtx(n) {
   if (!n) return ''
   return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
 }
 
-/** 编辑器里现在指向的那个模型（未保存也算，他点了就该看见勾） */
-function picked(pid, mid) {
-  const s = preview.value?.selected
-  return Boolean(s && s.providerId === pid && s.modelId === mid)
+/**
+ * 按顺序试的那条链。第一张就是现在用的，后面的都是备用。
+ * 用 preview 而不是 props.cfg：手改 JSON 还没应用时，卡片也要跟着变，
+ * 否则改完上面、下面的卡片还是旧的，人就不知道哪个是真的。
+ */
+const chain = computed(() => preview.value?.chain || [])
+const providers = computed(() => preview.value?.providers || [])
+const editable = computed(() => Boolean(preview.value?.ok))
+
+/** 还没进链的模型，按 provider 分组 —— 就是「+ 添加模型」里能点的那些 */
+const candidates = computed(() => {
+  const used = new Set(chain.value.map((m) => m.providerId + '/' + m.modelId))
+  const out = []
+  for (const p of providers.value) {
+    const rest = p.models.filter((m) => !used.has(p.id + '/' + m.id))
+    if (rest.length) out.push({ id: p.id, name: p.name, models: rest })
+  }
+  return out
+})
+
+const refOf = (m) => m.providerId + '/' + m.modelId
+
+/**
+ * 卡片的每个动作都走这里：改对象 → 写回编辑器 → 预览 → 应用。
+ *
+ * 改的是编辑器里那份文本，不是磁盘上那份。这样「改了一半的 JSON」不会被
+ * 点一下卡片就悄悄覆盖掉；反过来，卡片操作也不会因为草稿没应用而改了没反应。
+ */
+async function editChain(op, ref, extra) {
+  let obj
+  try {
+    obj = JSON.parse(text.value)
+  } catch {
+    editMsg.value = 'JSON 有语法错误，先把编辑器里的改对'
+    editKind.value = 'bad'
+    return
+  }
+  const r = await window.hundun.cfg.editModel({ config: obj, op, ref, ...(extra || {}) })
+  if (!r.ok) {
+    editMsg.value = r.error || '改不动'
+    editKind.value = 'bad'
+    return
+  }
+  editMsg.value = ''
+  text.value = JSON.stringify(r.config, null, 2)
+  await runPreview()
+  if (preview.value?.ok) await apply(true)
 }
+
+const editMsg = ref('')
+const editKind = ref('')
+
+/**
+ * 单独测一个模型。
+ *
+ * 底下那个「测试连接」只测首选 —— 而备用模型最容易出的问题是「配了但从没通过」：
+ * 等主模型真挂了才发现备用也不通，那就等于根本没有备用。
+ * 结果按 ref 记在卡片上，不弹窗：他要的是「这四张里哪张是通的」一眼看到。
+ */
+const tested = ref({})
+
+async function testOne(m) {
+  const r = refOf(m)
+  tested.value = { ...tested.value, [r]: { state: 'run' } }
+  const res = await window.hundun.cfg.test({
+    baseUrl: m.baseUrl,
+    apiKey: m.apiKey,
+    model: m.modelId
+  })
+  tested.value = {
+    ...tested.value,
+    [r]: res.ok ? { state: 'ok' } : { state: 'bad', detail: res.error }
+  }
+}
+
+const setHead = (m) => editChain('move', refOf(m), { to: 0 })
+const moveUp = (m, i) => editChain('move', refOf(m), { to: i - 1 })
+const moveDown = (m, i) => editChain('move', refOf(m), { to: i + 1 })
+const drop = (m) => editChain('remove', refOf(m))
+const addOne = (p, m) => {
+  adding.value = false
+  editChain('add', p.id + '/' + m.id)
+}
+
+/* ---- 拖拽排序 ---- */
+
+const dragFrom = ref(-1)
+const dragOver = ref(-1)
+
+function onDragStart(i, e) {
+  dragFrom.value = i
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    // Firefox 不 setData 就根本不开始拖
+    e.dataTransfer.setData('text/plain', String(i))
+  }
+}
+
+function onDrop(i) {
+  const from = dragFrom.value
+  dragFrom.value = -1
+  dragOver.value = -1
+  if (from < 0 || from === i) return
+  const m = chain.value[from]
+  if (m) editChain('move', refOf(m), { to: i })
+}
+
+/* ---- 编辑器 ---- */
+
+const showJson = ref(false)
+const adding = ref(false)
 
 async function importFile() {
   const r = await window.hundun.cfg.pickModelFile()
@@ -86,10 +207,12 @@ function formatJson() {
   }
 }
 
-async function apply() {
+async function apply(silent = false) {
   applying.value = true
-  applyMsg.value = ''
-  applyKind.value = ''
+  if (!silent) {
+    applyMsg.value = ''
+    applyKind.value = ''
+  }
   const r = await window.hundun.cfg.applyModel(text.value)
   applying.value = false
   if (!r.ok) {
@@ -99,23 +222,12 @@ async function apply() {
   }
   preview.value = { ...(preview.value || {}), warnings: r.warnings || [] }
   const n = (r.warnings || []).length
-  applyMsg.value = n ? `已应用，有 ${n} 条提醒` : '已应用'
-  applyKind.value = n ? 'warn' : 'ok'
-  if (r.cfg) emit('saved', r.cfg)
-}
-
-/** 点一个模型＝改顶层 model 再应用。不做「先记住再让他点保存」—— 点了就是要用这个。 */
-async function pickModel(pid, mid) {
-  let obj
-  try {
-    obj = JSON.parse(text.value)
-  } catch {
-    return
+  // 卡片上点一下不该弹一句「已应用」：那是他刚做的事，重复一遍只会让界面吵。
+  if (!silent) {
+    applyMsg.value = n ? `已应用，有 ${n} 条提醒` : '已应用'
+    applyKind.value = n ? 'warn' : 'ok'
   }
-  obj.model = pid + '/' + mid
-  text.value = JSON.stringify(obj, null, 2)
-  await runPreview()
-  if (preview.value?.ok) await apply()
+  if (r.cfg) emit('saved', r.cfg)
 }
 
 /* ---------------- 测试连接 ---------------- */
@@ -198,6 +310,10 @@ async function openLife() {
   window.hundun.life.open()
 }
 
+async function openRules() {
+  window.hundun.life.openRules()
+}
+
 async function reindex() {
   reindexing.value = true
   reindexMsg.value = ''
@@ -226,32 +342,20 @@ const dirLabel = computed(() => {
       <section class="set-block">
         <div class="set-title">
           <h2>模型</h2>
-          <span class="set-badge" :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey }">
-            {{ inUseText }}
+          <span
+            class="set-badge"
+            :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey, warn: dirty }"
+          >
+            {{ badgeText }}
           </span>
         </div>
         <p class="set-note">
-          格式照 opencode：<code>provider</code> 里写有哪些服务商和模型，顶层 <code>model</code> 用
-          <code>provider/模型</code> 指定现在用哪个。key 可以写成 <code>{env:变量名}</code> 或
-          <code>{file:路径}</code>，那样它不会进配置文件。
+          排在前面的先用，连不上就换下一个。拖动卡片也能改顺序。key 写成
+          <code>{env:变量名}</code> 或 <code>{file:路径}</code>，那样它不会进配置文件。
         </p>
 
-        <div class="json-box">
-          <div class="json-bar">
-            <button class="mini" @click="importFile">从文件导入</button>
-            <button class="mini" :disabled="!preview || !preview.ok" @click="formatJson">格式化</button>
-            <span v-if="imported" class="json-file">{{ imported }}</span>
-            <span class="json-spacer" />
-            <span v-if="dirty" class="json-dirty">未应用</span>
-            <button class="btn primary sm" :disabled="applying || !dirty" @click="apply">
-              {{ applying ? '应用中…' : '应用' }}
-            </button>
-          </div>
-          <textarea v-model="text" class="json-edit" spellcheck="false" autocomplete="off" />
-        </div>
-
-        <!-- 解析结果 -->
-        <div v-if="preview" class="preview">
+        <!-- 解析结果：错误放最上面，因为下面的卡片全都建在它上面 -->
+        <div v-if="preview && (preview.errors?.length || preview.warnings?.length)" class="preview">
           <div v-if="preview.errors?.length" class="pline bad">
             <span class="pmark">×</span>
             <div>
@@ -264,40 +368,117 @@ const dirLabel = computed(() => {
               <div v-for="(w, i) in preview.warnings" :key="'w' + i">{{ w }}</div>
             </div>
           </div>
+        </div>
 
-          <div v-if="preview.providers?.length" class="prov-list">
-            <div v-for="p in preview.providers" :key="p.id" class="prov">
-              <div class="prov-head">
-                <span class="prov-name">{{ p.name }}</span>
-                <span class="prov-id">{{ p.id }}</span>
-                <span v-if="!p.hasKey" class="prov-tag">无 key</span>
+        <!-- 一条链：第一张是现在用的，后面按顺序备用 -->
+        <div v-if="chain.length" class="mchain">
+          <div
+            v-for="(m, i) in chain"
+            :key="refOf(m)"
+            class="mcard"
+            :class="{ head: i === 0, over: dragOver === i && dragFrom !== i }"
+            draggable="true"
+            @dragstart="onDragStart(i, $event)"
+            @dragover.prevent="dragOver = i"
+            @dragleave="dragOver = -1"
+            @drop.prevent="onDrop(i)"
+            @dragend="dragOver = -1"
+          >
+            <span class="mrank">{{ i + 1 }}</span>
+            <div class="mmain">
+              <div class="mline">
+                <span class="mname">{{ m.modelName }}</span>
+                <span v-if="i === 0" class="mtag">先用这个</span>
+                <span v-else class="mtag alt">备用</span>
               </div>
-              <div class="prov-url">{{ p.baseUrl }}</div>
-              <div class="model-list">
-                <button
-                  v-for="m in p.models"
-                  :key="m.id"
-                  class="model-row"
-                  :class="{ on: picked(p.id, m.id) }"
-                  :disabled="!preview.ok"
-                  @click="pickModel(p.id, m.id)"
+              <div class="msub">
+                {{ m.providerName }}<span v-if="m.modelId !== m.modelName"> · {{ m.modelId }}</span
+                ><span v-if="m.contextWindow"> · {{ fmtCtx(m.contextWindow) }}</span>
+                <span
+                  v-if="tested[refOf(m)] && tested[refOf(m)].state !== 'run'"
+                  class="mtest"
+                  :class="tested[refOf(m)].state"
+                  :title="tested[refOf(m)].detail || '连上了'"
                 >
-                  <span class="model-tick" />
-                  <span class="model-name">{{ m.name }}</span>
-                  <span class="model-id">{{ m.id }}</span>
-                  <span v-if="m.context" class="model-ctx">{{ fmtCtx(m.context) }}</span>
-                </button>
+                  {{ tested[refOf(m)].state === 'ok' ? '通' : '不通' }}
+                </span>
               </div>
+              <div class="murl">{{ m.baseUrl }}</div>
             </div>
+            <div class="mops">
+              <button class="mop" title="只测这一个" @click="testOne(m)">
+                {{ tested[refOf(m)]?.state === 'run' ? '…' : '测' }}
+              </button>
+              <button v-if="i > 0" class="mop" title="设为先用" @click="setHead(m)">先用</button>
+              <button v-if="i > 0" class="mop" title="上移" @click="moveUp(m, i)">↑</button>
+              <button v-if="i < chain.length - 1" class="mop" title="下移" @click="moveDown(m, i)">
+                ↓
+              </button>
+              <button v-if="chain.length > 1" class="mop del" title="移出列表" @click="drop(m)">
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+        <p v-else-if="!preview || !preview.errors?.length" class="empty-chain">
+          还没有模型。下面写一份 JSON，或者从文件导入。
+        </p>
+
+        <div class="chain-foot">
+          <button
+            class="mini chain-toggle"
+            :disabled="!editable || !candidates.length"
+            @click="adding = !adding"
+          >
+            {{ adding ? '收起' : '+ 添加模型' }}
+          </button>
+          <span v-if="editable && !candidates.length" class="chain-hint">
+            配置里的模型都已经在列表里了
+          </span>
+          <span v-if="editMsg" class="status" :class="editKind">{{ editMsg }}</span>
+        </div>
+
+        <!-- 候选：配置里有、但还没排进链的 -->
+        <div v-if="adding && candidates.length" class="cand">
+          <div v-for="p in candidates" :key="p.id" class="cand-group">
+            <div class="cand-head">
+              {{ p.name }} <span class="cand-id">{{ p.id }}</span>
+            </div>
+            <button v-for="m in p.models" :key="m.id" class="cand-row" @click="addOne(p, m)">
+              <span class="cand-name">{{ m.name }}</span>
+              <span class="cand-mid">{{ m.id }}</span>
+              <span v-if="m.context" class="cand-ctx">{{ fmtCtx(m.context) }}</span>
+              <span class="cand-plus">+</span>
+            </button>
           </div>
         </div>
 
         <div class="act-row">
+          <button class="mini" @click="importFile">从文件导入</button>
+          <button class="mini" @click="showJson = !showJson">
+            {{ showJson ? '收起 JSON' : '编辑 JSON' }}
+          </button>
+          <span class="json-file" v-if="imported" :title="imported">{{ imported }}</span>
+          <span class="json-spacer" />
+          <span class="status" :class="testKind">{{ testMsg }}</span>
           <button class="btn sm" :disabled="testing" @click="test">
             {{ testing ? '测试中…' : '测试连接' }}
           </button>
-          <span class="status" :class="testKind">{{ testMsg }}</span>
         </div>
+
+        <div v-if="showJson" class="json-box json-fold">
+          <div class="json-bar">
+            <button class="mini" :disabled="!preview || !preview.ok" @click="formatJson">
+              格式化
+            </button>
+            <span class="json-spacer" />
+            <button class="btn primary sm" :disabled="applying || !dirty" @click="apply()">
+              {{ applying ? '应用中…' : '应用' }}
+            </button>
+          </div>
+          <textarea v-model="text" class="json-edit" spellcheck="false" autocomplete="off" />
+        </div>
+
         <div v-if="applyMsg" class="act-row">
           <span class="status" :class="applyKind">{{ applyMsg }}</span>
         </div>
@@ -347,6 +528,15 @@ const dirLabel = computed(() => {
           </div>
           <div class="cfg-act">
             <button class="mini" @click="openLife">打开</button>
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">
+            <span>你自己写的规矩</span>
+            <small>RULES.md，改完保存就生效，不用重启</small>
+          </div>
+          <div class="cfg-act">
+            <button class="mini" @click="openRules">打开</button>
           </div>
         </div>
         <div class="cfg-row">

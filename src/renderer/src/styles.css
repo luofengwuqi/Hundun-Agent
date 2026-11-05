@@ -1428,3 +1428,296 @@ textarea::placeholder {
   padding: 3px 12px;
   font-size: 12.5px;
 }
+
+/* ============================================================
+   模型链（D073）：一张卡一个模型，从上到下就是尝试顺序。
+   参考 cc-switch 的首页 —— 卡片是主体，配置文件退到后面。
+   ============================================================ */
+
+.mchain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcard {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  border: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+  padding: 10px 12px 10px 11px;
+  cursor: grab;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+.mcard:hover {
+  border-color: #ddcbac;
+}
+
+.mcard.head {
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, #fffaf0, var(--panel) 42%);
+}
+
+/* 拖动经过时的那条线：只说「会插在这里」，不整张卡变色 */
+.mcard.over {
+  box-shadow: inset 0 2px 0 var(--accent), var(--shadow-card);
+}
+
+.mrank {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg-deep);
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mcard.head .mrank {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.mmain {
+  flex: 1;
+  min-width: 0;
+}
+
+.mline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mname {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mtag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid #eecdc9;
+  border-radius: 20px;
+  padding: 0 7px;
+}
+
+.mtag.alt {
+  color: var(--ink-3);
+  background: var(--bg-deep);
+  border-color: var(--line);
+}
+
+.msub {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.murl {
+  margin-top: 1px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作：平时不占位置，鼠标上来才出现。四个按钮挤在卡片里会让它一直很吵 */
+.mops {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.mcard:hover .mops {
+  opacity: 1;
+}
+
+.mop {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.mop:hover {
+  color: var(--ink);
+  border-color: #d6c39c;
+}
+
+.mop.del:hover {
+  color: var(--accent);
+  border-color: #eecdc9;
+  background: var(--accent-soft);
+}
+
+.chain-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chain-hint,
+.empty-chain {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.empty-chain {
+  margin: 0;
+  padding: 12px 0;
+}
+
+/* ---- 候选模型 ---- */
+
+.cand {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-deep);
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.cand-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cand-head {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  padding: 2px 4px 4px;
+}
+
+.cand-id {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  color: var(--ink-3);
+}
+
+.cand-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cand-row:hover {
+  background: var(--panel);
+}
+
+.cand-name {
+  flex: 0 0 auto;
+}
+
+.cand-mid {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cand-ctx {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.cand-plus {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.json-fold {
+  margin-top: 10px;
+}
+
+/* 按钮宽度固定：文案在「+ 添加模型」和「收起」之间切换，不固定就会跳一下 */
+.chain-toggle {
+  min-width: 92px;
+  text-align: center;
+}
+
+/* 候选分组标题：名字和 id 中间有一点气口，不然会读成「DeepSeek deepseek」一个词 */
+.cand-head .cand-id::before {
+  content: '·';
+  margin: 0 5px;
+  color: var(--line);
+}
+
+/* 有改动还没应用：角标变成提醒色，不用另一个名字去说「现在用的是谁」 */
+.set-badge.warn {
+  color: #7a5a15;
+  border-color: #ecd9ad;
+  background: #fdf3dd;
+}
+
+/* 单卡测试结果：只留一个字，细节放 title。卡片里塞一整句报错会把布局撑坏 */
+.mtest {
+  margin-left: 7px;
+  font-size: 10.5px;
+  border-radius: 20px;
+  padding: 0 6px;
+  border: 1px solid;
+}
+
+.mtest.ok {
+  color: #2f6b46;
+  background: #e8f3ec;
+  border-color: #c4ddcf;
+}
+
+.mtest.bad {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: #eecdc9;
+}

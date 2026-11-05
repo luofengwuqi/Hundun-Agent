@@ -286,6 +286,16 @@ onMounted(async () => {
       noticeBad.value = false
     })
   )
+  // 排在前面的模型没连上，用了后面的。这句话必须说出来：
+  // 悄悄换掉的话，同一句回答的「口气」突然变了，而他找不到原因。
+  offs.push(
+    window.hundun.chat.onFallback((d) => {
+      const first = (d && d.failed && d.failed[0] && d.failed[0].model) || '排在前面的模型'
+      const used = (d && d.used && (d.used.label || d.used.model)) || '下一个模型'
+      notice.value = `${first} 没连上，这条是 ${used} 回的。`
+      noticeBad.value = false
+    })
+  )
   offs.push(window.hundun.quiet.onState((on) => (quiet.value = on)))
 
   if (!cfg.value.hasApiKey || cfg.value.modelBroken) {

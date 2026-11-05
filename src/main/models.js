@@ -24,6 +24,15 @@
  *     },
  *     "model": "deepseek/deepseek-chat"
  *   }
+ *
+ * 多个模型排一条链（第二个起是备用）时，顺序写在 `x-hundun.modelOrder` 里：
+ *
+ *   "model": "deepseek/deepseek-chat",
+ *   "x-hundun": { "modelOrder": ["deepseek/deepseek-chat", "local/qwen2.5:7b"] }
+ *
+ * 顶层 `model` 仍然是首选——它是 opencode 的标准字段，也是他手改 JSON 时最直觉的入口。
+ * 两者冲突时以 `model` 为准并把它提到最前，否则就会变成「改了 model 却没反应」。
+ * 写入时这两个值永远一起重算，所以不存在两份互相矛盾的事实。
  */
 
 const fs = require('fs')
@@ -189,18 +198,44 @@ function normalize(raw, opts = {}) {
     return { ok: false, errors, warnings, providers: [], ref: '', selected: null }
   }
 
-  // ---- 选哪个 ----
-  let ref = String(src.model || '').trim()
-  if (!ref) {
-    const first = providers[0]
-    ref = first.id + '/' + first.models[0].id
-    warnings.push(`顶层没写 model，先按第一个用：${ref}`)
+  // ---- 排一条链：先用谁、连不上再用谁 ----
+  //
+  // 顺序存在 JSON 里（x-hundun.modelOrder），不另存到 config.json。理由和上面一样：
+  // 「有哪些模型」和「先用哪一个」是同一件事的两半，分开存就一定会有对不上的一天，
+  // 而对不上的时候它不报错 —— 只是用的不是他排的那个。
+  const ext = src['x-hundun'] && typeof src['x-hundun'] === 'object' ? src['x-hundun'] : {}
+  const orderRaw = Array.isArray(ext.modelOrder) ? ext.modelOrder : []
+
+  const known = new Map()
+  for (const p of providers) {
+    for (const m of p.models) known.set(p.id + '/' + m.id, { p, m })
+  }
+  const toItem = ({ p, m }) => ({
+    providerId: p.id,
+    providerName: p.name,
+    modelId: m.id,
+    modelName: m.name,
+    baseUrl: p.baseUrl,
+    apiKey: p.apiKey,
+    contextWindow: m.context
+  })
+
+  // 首选：顶层 model 说了算；它空着才看顺序的第一项；都没有就挑第一个能用的。
+  let head = String(src.model || '').trim()
+  if (!head) {
+    const firstInOrder = orderRaw.map((r) => String(r || '').trim()).find(Boolean)
+    if (firstInOrder) {
+      head = firstInOrder
+    } else {
+      head = providers[0].id + '/' + providers[0].models[0].id
+      warnings.push(`顶层没写 model，先按第一个用：${head}`)
+    }
   }
 
-  const parsed = splitRef(ref)
   let selected = null
+  const parsed = splitRef(head)
   if (!parsed) {
-    errors.push(`model 要写成 "provider/model" 的形式（现在是 "${ref}"）`)
+    errors.push(`model 要写成 "provider/model" 的形式（现在是 "${head}"）`)
   } else {
     const p = providers.find((x) => x.id === parsed.providerId)
     if (!p) {
@@ -210,28 +245,103 @@ function normalize(raw, opts = {}) {
       if (!m) {
         errors.push(`${parsed.providerId} 下面没有这个模型：${parsed.modelId}`)
       } else {
-        selected = {
-          providerId: p.id,
-          providerName: p.name,
-          modelId: m.id,
-          modelName: m.name,
-          baseUrl: p.baseUrl,
-          apiKey: p.apiKey,
-          contextWindow: m.context
-        }
+        selected = toItem({ p, m })
       }
     }
   }
 
-  return { ok: errors.length === 0, errors, warnings, providers, ref, selected }
+  // 备选：顺序里除首选之外的。**引用不到的只丢一项、记一条警告，不整份报错** ——
+  // 少一个备用模型不应该让整个配置不可用，那会把「备用」变成「负担」。
+  const chain = selected ? [selected] : []
+  for (const raw of orderRaw) {
+    const ref = String(raw || '').trim()
+    if (!ref || ref === head) continue
+    if (chain.some((c) => c.providerId + '/' + c.modelId === ref)) continue
+    const hit = known.get(ref)
+    if (hit) chain.push(toItem(hit))
+    else warnings.push(`顺序里的 "${ref}" 找不到对应模型，已跳过`)
+  }
+
+  return { ok: errors.length === 0, errors, warnings, providers, ref: head, selected, chain }
+}
+
+/** 依次尝试的整条链。只有一个模型时就是它自己。 */
+function chainOf(raw, opts = {}) {
+  const r = normalize(raw, opts)
+  return r.ok ? r.chain : []
+}
+
+/** JSON 里的顺序（首选在前）。规则与 normalize 一致：顶层 model 永远提到最前。 */
+function orderOf(json) {
+  const ext = json && json['x-hundun'] && typeof json['x-hundun'] === 'object' ? json['x-hundun'] : {}
+  const list = Array.isArray(ext.modelOrder) ? ext.modelOrder : []
+  const out = []
+  const head = String((json && json.model) || '').trim()
+  if (head) out.push(head)
+  for (const raw of list) {
+    const ref = String(raw || '').trim()
+    if (ref && !out.includes(ref)) out.push(ref)
+  }
+  return out
+}
+
+/** 把顺序写回去：x-hundun.modelOrder 是源，顶层 model 是它的第一项（给 opencode 看的）。 */
+function withOrder(json, refs) {
+  const out = JSON.parse(JSON.stringify(json || {}))
+  const list = []
+  for (const raw of refs) {
+    const ref = String(raw || '').trim()
+    if (ref && !list.includes(ref)) list.push(ref)
+  }
+  const ext = out['x-hundun'] && typeof out['x-hundun'] === 'object' ? out['x-hundun'] : {}
+  out['x-hundun'] = { ...ext, modelOrder: list }
+  if (list.length) out.model = list[0]
+  else delete out.model
+  return out
 }
 
 /**
- * 从已保存的配置算出「实际要用的四个值」。
+ * 改顺序／加一个／删一个。都是纯函数，返回新的 JSON 对象，不碰磁盘。
+ * 放在这里而不是界面里，是因为界面那一份迟早会和解析那一份走偏 —— 而排序错了的表现
+ * 只是「它用的模型不是排第一的那个」，没有任何报错。
+ */
+function moveModel(json, ref, to) {
+  const list = orderOf(json)
+  const i = list.indexOf(String(ref || '').trim())
+  if (i < 0) return { ok: false, error: '这个模型不在列表里' }
+  const target = Math.max(0, Math.min(list.length - 1, Number(to)))
+  if (target === i) return { ok: true, config: json }
+  list.splice(i, 1)
+  list.splice(target, 0, ref)
+  return { ok: true, config: withOrder(json, list) }
+}
+
+function addModel(json, ref) {
+  const s = String(ref || '').trim()
+  if (!s) return { ok: false, error: '没指定模型' }
+  const list = orderOf(json)
+  if (list.includes(s)) return { ok: false, error: '这个模型已经在列表里了' }
+  list.push(s)
+  return { ok: true, config: withOrder(json, list) }
+}
+
+function removeModel(json, ref) {
+  const list = orderOf(json)
+  const i = list.indexOf(String(ref || '').trim())
+  if (i < 0) return { ok: false, error: '这个模型不在列表里' }
+  // 至少留一个：删空了连「跟谁说话」都不存在，保存时必然报错，
+  // 那不如现在就说清楚，而不是让他点删除之后才发现整份配置坏了。
+  if (list.length === 1) return { ok: false, error: '至少留一个模型' }
+  list.splice(i, 1)
+  return { ok: true, config: withOrder(json, list) }
+}
+
+/**
+ * 从已保存的配置算出「实际要用的几个值」。
  *
- * 这四个值是 llm.js 唯一认的东西。它们不再由人直接填，而是每次从 modelConfig 现算 ——
+ * 这些值是 llm.js 唯一认的东西。它们不再由人直接填，而是每次从 modelConfig 现算 ——
  * 这样就没有「两边不一致」这件事了：不一致的可能是零，因为只有一份是源。
- * @returns {{baseUrl,apiKey,model,contextWindow}|null} 解析不出来返回 null
+ * @returns {{baseUrl,apiKey,model,contextWindow,chain}|null} 解析不出来返回 null
  */
 function resolve(cfg, opts = {}) {
   if (!cfg || !cfg.modelConfig) return null
@@ -241,7 +351,9 @@ function resolve(cfg, opts = {}) {
     baseUrl: r.selected.baseUrl,
     apiKey: r.selected.apiKey,
     model: r.selected.modelId,
-    contextWindow: r.selected.contextWindow || 0
+    contextWindow: r.selected.contextWindow || 0,
+    // 先用谁、连不上再用谁。只有一个模型时它就是单元素数组。
+    chain: r.chain
   }
 }
 
@@ -270,4 +382,17 @@ function seedFromLegacy(cfg) {
   return { provider: { [id]: conf }, model: id + '/' + model }
 }
 
-module.exports = { normalize, resolve, seedFromLegacy, splitRef, substitute, OPENAI_COMPATIBLE }
+module.exports = {
+  normalize,
+  resolve,
+  chainOf,
+  orderOf,
+  withOrder,
+  moveModel,
+  addModel,
+  removeModel,
+  seedFromLegacy,
+  splitRef,
+  substitute,
+  OPENAI_COMPATIBLE
+}
