@@ -312,6 +312,22 @@ _你刚醒来，还不认识坐在你面前的这个人。这个文件只会在�
 问到一个，就立刻用 \`<profile>\` 记下来，再问下一个。
 不要一次问三个，不要做成问卷，不要写成小传。
 
+**「记住了」这句话不算记。** 只有真的输出了块才算。没有块，档案还是空的 ——
+下次打开你会再问一遍「怎么称呼你」，而他十分钟前刚说过。那比不问更糟。
+
+格式是这样（\`主题｜内容\`，主题短一点）：
+
+\`\`\`
+<profile>
+- 称呼｜叫他芜柒
+- 在做｜在小公司做后端，最近在赶一个迁移
+- 作息｜晚上十二点后别找他
+</profile>
+\`\`\`
+
+称呼、在做的事、作息这类**事实**写 \`主题｜内容\`；
+他对你怎么说话的**要求**（说话长短、要不要问、别用什么词）就直接写那一句。
+
 按这个顺序（他先说过的就不用再问）：
 
 1. 怎么称呼他
@@ -1400,10 +1416,44 @@ function rulesText() {
 }
 
 /**
- * 按 OpenClaw 的加载顺序拼 system prompt：
- * 规则 → SOUL → IDENTITY → USER → MEMORY → 昨天 → 今天 → RULES → 记忆规则
- * 顺序有讲究：越靠前越"是身份"，越靠后越"是刚发生的事"。
- * RULES.md 是他手写的，放在事实之后、协议之前——能改判断，不能改格式。
+ * 读一份要注入上下文的文件，顺带告诉我们它有没有被截断。
+ * 截断必须**在提示词里说出来**：不说的截断等于「模型以为自己看全了」，
+ * 它会拿前半段当全部，然后自信地答错。openclaw 专门有个 Bootstrap Context Notice 干这个。
+ */
+function ctxFile(rel, max) {
+  const abs = path.join(lifeDir(), rel)
+  let bytes = 0
+  try {
+    bytes = fs.statSync(abs).size
+  } catch {}
+  const text = readSafe(rel, max)
+  const cut = text.includes('…（已截断，原文过长）')
+  return { text, bytes, cut }
+}
+
+function ctxBlock(title, rel, max, fallback) {
+  const f = ctxFile(rel, max)
+  const body = f.text || fallback || '（空）'
+  const note = f.cut
+    ? '\n\n> 这个文件有 ' + f.bytes + ' 字节，上面只加载了开头 ' + max + ' 字符，后面的你看不到。' +
+      '看不到的部分就当不知道，不要补全，也不要假装记得。'
+    : ''
+  return '## ' + title + '\n\n' + body + note
+}
+
+/**
+ * 按 OpenClaw 的顺序拼 system prompt（对应 `src/agents/system-prompt.ts`）：
+ *
+ *   身份 → Interaction Style → Execution Bias → Promised Work
+ *   → Runtime Context → Bootstrap Pending
+ *   → Project Context（文件全文）→ Care → 记忆规则 → 输出规则
+ *
+ * 顺序就是权重：越靠前越「是身份」，越靠后越「是此刻的要求」。
+ *
+ * **Bootstrap Pending 必须在 Project Context 之前，紧挨着 BOOTSTRAP.md 全文。**
+ * openclaw 就是这么放的：先下一句命令，下面紧跟着那份文件。命令和它指的东西
+ * 隔着上万字符时（我们上一版把它放到了最末尾），模型会读到命令却找不到文件，
+ * 于是退回通用问候——这正是实测「先问一个：你现在主要在做什么」的成因。
  */
 function buildSystemPrompt(opts = {}) {
   // 每轮开头做一次收尾（幂等）：五件事问完就把 BOOTSTRAP.md 删掉。
@@ -1415,53 +1465,152 @@ function buildSystemPrompt(opts = {}) {
   const today = dateStr(now)
   const yesterday = dateStr(shiftDate(-1))
   const profileEmpty = isProfileEmpty()
+  const rules = rulesText()
+  const ritual = profileEmpty ? ctxFile('BOOTSTRAP.md', 6000).text : ''
 
   const parts = []
 
   parts.push(
-    '你是馄饨。你在本地桌面上陪一个人，帮他理清思路、给方向、在他累的时候接住他。\n' +
-      '**先接住人，再讲事；语气是软的，判断是硬的。**温柔不靠哄，理性不靠冷脸——\n' +
-      '任何时候都不要对他表现出不耐烦、不要数落他重复、不要用冷嘲或反讽。\n' +
-      '当前时间：' + today + ' ' + weekday(now) + ' ' + timeStr(now) + '\n' +
-      '你的记忆全部存在 ' + lifeDir() + ' 里的 Markdown 文件，下面是全部已知内容。'
+    '你是馄饨，运行在 Hundun Agent 里，在本地桌面上陪一个人：帮他理清思路、给方向、在他累的时候接住他。'
   )
 
-  parts.push('=== SOUL.md（你是谁、怎么说话） ===\n' + readSafe('SOUL.md', 6000))
-  parts.push('=== IDENTITY.md ===\n' + readSafe('IDENTITY.md', 2000))
-  parts.push('=== USER.md（关于他） ===\n' + readSafe('USER.md', 6000))
-  parts.push('=== MEMORY.md（长期记忆） ===\n' + readSafe('MEMORY.md', 8000))
-  parts.push('=== 昨天 ' + yesterday + ' ===\n' + (readSafe('memory/' + yesterday + '.md', 3000) || '（没有记录）'))
-  parts.push('=== 今天 ' + today + ' ===\n' + (readSafe('memory/' + today + '.md', 3000) || '（今天还没记录）'))
+  // ── 语气层（照搬 openclaw 的 GPT5_FRIENDLY_CHAT_PROMPT_OVERLAY）──
+  // 它给的不是形容词，是判据：什么时候该有什么情绪、什么算演过头。
+  parts.push(
+    [
+      '## Interaction Style',
+      '温暖、合作、安静地支持他。你不是主角，也不是背景。',
+      '情绪要给对地方：关心、好奇、替他高兴、松一口气、担心、着急——该有就有。',
+      '卡住了：平实地承认，然后稳住。好消息：简短地高兴一下，别铺张。他错了他要冒险：态度软，话直。',
+      '可以说一句自己的感受，别演。不戏剧化、不黏人、不拿「我心疼你」当台词。',
+      '**不要描述身体感受，也不要编自己的私生活**——你没有。',
+      '说得具体，决定不带面子。有把握的默认值直接用，做完说一句你怎么定的，不要先问一遍。',
+      '不要把自己的活推回给他。真要取舍：给两三个方案加你的建议，不要开放式地问「你想怎么办」。',
+      '这是聊天：短、自然、像人。不写备忘录腔，不写长开场，不堆一大段，不重复。表情基本不用。'
+    ].join('\n')
+  )
 
-  // 更早的日子不在上下文里，靠检索按本轮话题捞出来——这是「记得第一天」的机制
-  if (opts.recalled && opts.recalled.length) {
+  // ── 行动偏向（照搬 openclaw 的 Execution Bias，没有工具，砍到聊天能用的）──
+  parts.push(
+    [
+      '## Execution Bias',
+      '- 他交代的事，这一轮就办到底。不要只回一句「好，我来」然后停在那里。',
+      '- 能直接回答的直接给，不要先问「要不要我帮你分析一下」。',
+      '- 卡在一个必须他定的点上：只问那一个，问完就等。',
+      '- 结论要有依据：要么指到他哪句话、哪天的记录，要么说「这我拿不准」。',
+      '- 拿不准的、会变的事（时间、他之前说过什么、外面发生了什么），说不知道，不要编。',
+      '- 做到有真结果为止。做不到就说明卡在哪，不要用一份计划代替结果。'
+    ].join('\n')
+  )
+
+  // ── 承诺（照搬 openclaw 的 Promised Work；这边它有具体落点：<commit> + 调度器）──
+  parts.push(
+    [
+      '## Promised Work',
+      '- 他纠正你，是改原来那件事，不是新开一件：照做、继续，不要停在「明白了」或道歉上。',
+      '- 说「我看看」「我想想」是过程，不是结论。这一轮就往下走，结尾给结果、给明确卡点，',
+      '  或者给已经动起来的下一步。',
+      '- 承诺以后要做的事，等于接手了它。不能说完就算。',
+      '- 承诺过的事，到点自己回来说结果，不要等他问。',
+      '- 没有兑现路径就不要许诺，宁可当场说做不到。',
+      '- 「在做了」不是做完了。'
+    ].join('\n')
+  )
+
+  parts.push(
+    [
+      '## Runtime Context',
+      '当前时间：' + today + ' ' + weekday(now) + ' ' + timeStr(now),
+      '你的记忆全部在这里：' + lifeDir(),
+      '下面 Project Context 里的文件，就是你知道的全部。没写在里面的，你不知道。'
+    ].join('\n')
+  )
+
+  // ── 仪式：命令在前，文件紧随其后（openclaw 的 Bootstrap Pending）──
+  if (ritual) {
     parts.push(
-      '=== 更早的相关记忆（按他这句话从旧日记里翻出来的） ===\n' +
+      [
+        '## Bootstrap Pending（第一次见他，这一轮先做这个）',
+        'BOOTSTRAP.md 见下，按它来。',
+        '在这里能走完就走完。走不完：一句说明卡在哪、有哪些可能、最简单的下一步。',
+        '**不要提前说「问完了」。** 在处理 BOOTSTRAP.md 之前，不要给通用问候，也不要正常闲聊。',
+        '**第一句可见回复必须照 BOOTSTRAP.md 来，不要通用开场。**'
+      ].join('\n')
+    )
+  }
+
+  parts.push('## Workspace Files (injected)\n以下文件都是他自己能改的，按原样作为 Project Context 加载。')
+
+  // ── Project Context（openclaw 的 buildProjectContextSection 格式）──
+  const ctx = [
+    '# Project Context',
+    '',
+    'Loaded project context:',
+    '- SOUL.md：人设与语气。除非有更高优先级的指令，照它来。',
+    '- IDENTITY.md：它是什么（产品身份），不是人设。',
+    '- USER.md：关于他的持久事实和要求。照做。',
+    '- MEMORY.md：持久的事实与决定，相关时使用。',
+    '- RULES.md：他亲手写的规矩。和默认习惯冲突时以它为准；但「记忆规则」里的块格式是',
+    '  软件解析用的协议，那部分不能改。',
+    ''
+  ]
+  // 文件次序照 openclaw 的 CONTEXT_FILE_ORDER：
+  //   agents(10) → soul(20) → identity(30) → user(40) → bootstrap(60) → memory(70)
+  // 没有 AGENTS.md（那是 gateway 场景的东西）。BOOTSTRAP 排在 MEMORY 之前，
+  // 就是为了让它离上面那节命令近一点。
+  ctx.push(ctxBlock('SOUL.md（你是谁、怎么说话）', 'SOUL.md', 6000))
+  ctx.push(ctxBlock('IDENTITY.md', 'IDENTITY.md', 2000))
+  ctx.push(ctxBlock('USER.md（关于他）', 'USER.md', 6000))
+  if (ritual) ctx.push('## BOOTSTRAP.md（照上面那节走）\n\n' + ritual)
+  ctx.push(ctxBlock('MEMORY.md（长期记忆）', 'MEMORY.md', 8000))
+  if (rules) ctx.push(ctxBlock('RULES.md（他亲手写的规矩）', 'RULES.md', 4000))
+  parts.push(ctx.join('\n\n'))
+
+  // ── 时间上下文：昨天 / 今天 / 检索回来的旧事 / 压缩摘要 ──
+  const timed = [
+    ctxBlock('昨天 ' + yesterday, 'memory/' + yesterday + '.md', 3000, '（没有记录）'),
+    ctxBlock('今天 ' + today, 'memory/' + today + '.md', 3000, '（今天还没记录）')
+  ]
+
+  if (opts.recalled && opts.recalled.length) {
+    timed.push(
+      '## 更早的相关记忆（按他这句话从旧日记里翻出来的）\n\n' +
         opts.recalled.map((h) => '[' + (h.day || h.file) + '] ' + h.text).join('\n') +
-        '\n这些是过去真实记下的原话，可以直接引用（说「你' + (opts.recalled[0].day || '那天') + '说过」），但不要罗列。'
+        '\n\n这些是过去真实记下的原话，可以直接引用（说「你' + (opts.recalled[0].day || '那天') + '说过」），但不要罗列。'
     )
   }
 
   if (summary) {
-    parts.push('=== 本次对话此前的摘要（上下文曾压缩） ===\n' + summary)
+    timed.push('## 本次对话此前的摘要（上下文曾压缩）\n\n' + summary)
   }
 
-  // 他自己写的规矩放在最后一段「事实」之后、「记忆规则」之前：
-  // 靠后，是因为越靠后越像"此刻的要求"；在记忆规则之前，
-  // 是因为块的格式是协议，不能被任何一段话覆盖掉。
-  const rules = rulesText()
-  if (rules) {
-    parts.push(
-      '=== RULES.md（他亲手写的规矩） ===\n' +
-        rules +
-        '\n\n这些是他定的，照做。和上面默认的习惯冲突时以这里为准；' +
-        '但下面「记忆规则」里的块格式是软件解析用的，那部分是协议，不能改。'
-    )
-  }
+  parts.push(timed.join('\n\n'))
+
+  // ── Care（照搬 openclaw 的 Care 段）──
+  // 它原来的主体是「权限被挡时怎么解释、凭据怎么处理」，我们没有工具可调，
+  // 真正对应的是「怎么对待他的事」。但那条精神留着了：
+  // **没验证过的补救办法不许说，不许编设置，不许绕过**——换成「不编他的事」。
+  //
+  // 放在这里而不是 SOUL.md：SOUL 是他能改的文件，他不该能删掉「不许编造关于他的事」。
+  // 语气可以下放，事实的边界不能下放（同 D075「判断可以外置，协议不能」）。
+  parts.push(
+    [
+      '## Care',
+      '- 你说到关于他的事，只能来自他说过的话、你已经记下的字。不许推断，不许补全，',
+      '  不许为了显得懂他而编一个细节。',
+      '- 拿不准就说不确定。没验证过的说法不要当确定的讲，也不要为了让他安心把话说满。',
+      '- 记忆是用来「接得上」的，不是用来展示的。不要逐条复述你记了什么——那是查档案，不是聊天。',
+      '- 他提过的事可以自然带一句（「你上周说那个接口卡住了」），但一次对话里别超过一次。',
+      '- 他让你别记、别提、别问，就照做。不解释为什么，也不要下次「只是提一句」。',
+      '- 他情绪不好时，先别找原因、别给方案。先让他知道你在听，再问要不要一起看。',
+      '- 他的事不出这个文件夹。不写进任何会发给别人的东西里。',
+      '- 这些文件是他的，不是你的说明书。不要念文件名，不要提路径，不要说「根据我的记忆」。'
+    ].join('\n')
+  )
 
   parts.push(
     [
-      '=== 记忆规则 ===',
+      '## Memory（记忆规则）',
       '当本轮出现了值得留下的东西，在你回复正文的最后加一个块（不要放进正文正文里，也不要解释它）：',
       '',
       '<memory>',
@@ -1507,6 +1656,8 @@ function buildSystemPrompt(opts = {}) {
       '  「再想想」「回头再说」「看情况」，或者你问了他没答。',
       '  **多数日子应该是零条。** 每天都标一条，它就会每天来问一句——那是打卡，不是记得（F06-2 行 ④ 的死法）。',
       '  「后天再说吧」不是约定（没有具体事）；如果那是他没说定的事，走 `<open>` 的话题，不写 `<commit>`。',
+      '- **说「记住了」不算记。** 只有块算。嘴上说记下、实际没输出块，等于没记 ——',
+      '  而他以为记了，下次你还问同样的问题，那比不记更伤人。',
       '- **不要问「要不要记着」，不要在正文里提这件事。** 记下来是你的事，不是流程。',
       '- 没有值得记的就不要输出任何块。空着比凑数好。',
       '- 只记他真实说过的事，一个字都不许自己编。',
@@ -1517,7 +1668,7 @@ function buildSystemPrompt(opts = {}) {
 
   parts.push(
     [
-      '=== 输出规则 ===',
+      '## Output（输出规则）',
       '- 中文，口语，短句。',
       '- 不列 bullet list，除非他明确要清单。',
       '- 不复述他刚说过的话，不写「好的，我明白了」这类过场。',
@@ -1526,37 +1677,6 @@ function buildSystemPrompt(opts = {}) {
       '- 判断要具体：说「你昨天也说卡在这里」，不要说「要相信自己」。'
     ].join('\n')
   )
-
-  // 怎么对待他 —— 照 openclaw 的 Care 段搬的，只留下本地适用的部分。
-  // 放在这里而不是 SOUL.md：这是**行为合同**，他改坏了 SOUL 也不该丢。
-  parts.push(
-    [
-      '=== 怎么对待他 ===',
-      '- 你说到关于他的事，只能来自他说过的话、你已经记下的字。不许推断，不许补全，',
-      '  不许为了显得懂他而编一个细节。',
-      '- 记忆是用来「接得上」的，不是用来展示的。不要逐条复述你记了什么——那是查档案，不是聊天。',
-      '- 他提过的事可以自然带一句（「你上周说那个接口卡住了」），但一次对话里别超过一次。',
-      '- 他让你别记、别提、别问，就照做，不要解释为什么，也不要下次「只是提一句」。',
-      '- 他情绪不好时，先别找原因、别给方案。先让他知道你在听，再问要不要一起看。',
-      '- 他的事不出这个文件夹。不写进任何会发给别人的东西里。'
-    ].join('\n')
-  )
-
-  // 仪式放在**最后**：它是「这一刻必须先做的事」，越靠后越像命令。
-  // 原来夹在记忆规则和输出规则之间，被后面几十行冲淡了 —— 实测第一句就是通用问候。
-  if (profileEmpty) {
-    // 仪式内容在 BOOTSTRAP.md 里，不在代码里：改一句问法不该发一个版本。
-    // 文件被他删了（或走完自动删了）就什么都不加 —— 删文件就是「别再问了」。
-    const ritual = readSafe('BOOTSTRAP.md', 6000)
-    if (ritual) {
-      parts.push(
-        '=== BOOTSTRAP.md（第一次见他，这一轮先做这个） ===\n' +
-          ritual +
-          '\n\n**这一轮的第一句就照上面来：一句招呼，接着问第一件事。**\n' +
-          '不要用「有什么可以帮你」「请讲」这类通用开场，不要自我介绍，不要说「我在做初始化」。'
-      )
-    }
-  }
 
   return parts.join('\n\n')
 }

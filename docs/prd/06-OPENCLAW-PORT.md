@@ -29,8 +29,12 @@ hundunAgent 是 **Electron 单进程**：主进程就是全部后端，索引已
 | 注入内容的顺序固定（性格→身份→用户→长期→今日→检索） | 同上 | `buildSystemPrompt` | 更早 |
 | 记忆维护：日记定期折叠进长期记忆（只搬目的，不搬三阶段） | `concepts/dreaming.md` | `src/main/dream.js` + `startDream()` | D080 |
 | 人格分两层，语气层要正面写「温暖」并给情绪时机 | `agents/gpt5-prompt-overlay.ts`（`Interaction Style`）、`concepts/soul.md` | `TPL_SOUL` 的「外面这层／里面这层」 | D083／D084 |
-| 行为合同（不许编、不许背档案、情绪先接住）写进代码，不放用户可改的文件 | `agents/system-prompt.ts` 的 **Care** 段 | `buildSystemPrompt` 的「怎么对待他」 | D084 |
-| 「仪式是命令」：把 BOOTSTRAP 放在提示词**末尾**并加硬约束 | `system-prompt.ts` 的 `## Bootstrap Pending`（"no generic greeting"） | `buildSystemPrompt` 最后一段 | D084 |
+| 行为合同（不许编、不许背档案、情绪先接住）写进代码，不放用户可改的文件 | `agents/system-prompt.ts` 的 **Care** 段 | `buildSystemPrompt` 的 `## Care` | D085 |
+| 仪式是命令：`## Bootstrap Pending` 放在 Project Context **之前**，BOOTSTRAP.md 全文紧随其后 | `system-prompt.ts`「no generic greeting」+ `CONTEXT_FILE_ORDER`（bootstrap=60） | `buildSystemPrompt` 骨架 | D085 |
+| 提示词骨架整体照抄：定位句 → Interaction Style → Execution Bias → Promised Work → Runtime Context → 文件注入 → Care → Memory → Output | `agents/system-prompt.ts` 的组装顺序 | `buildSystemPrompt` | D085 |
+| 行动偏向：能做就做，不先问许可；过程不是结论 | `## Execution Bias`、`## Tool Call Style` | `## Execution Bias` 六条 | D085 |
+| 承诺要有 follow-through：“到点自己回来说结果” | `## Promised Work`（`promised-work-prompt.ts`） | `## Promised Work` + `<commit>` + 调度器 | D085 |
+| 截断要写在提示词里，不能只留一个省略号 | `## Bootstrap Context Notice` | `ctxFile` / `ctxBlock` 的「只加载了开头 N 字符」 | D085 |
 | 出厂模板逐版升级：只覆盖「逐字等于历史版本」的文件 | 无直接对应（它的模板不升级） | `migrateSoulTemplate` + `SOUL_HISTORY` | D083／D084 |
 
 ## 二、待搬
@@ -40,9 +44,9 @@ hundunAgent 是 **Electron 单进程**：主进程就是全部后端，索引已
 ### P1 上下文预算：总量控制
 
 - openclaw：单文件 2 万字符、总量 6 万字符，超了在提示词里插一句「有文件被截断」。
-- 这边：各文件分别有上限（6000／2000／6000／8000／3000／3000），**但没有总量核算**，也没有「被截断了」的提示。
-- 风险：中文 2.8 万字符约 2 万 token，在 32k 窗口里偏重；`readSafe` 截断时模型不知道自己看到的是残篇。
-- 搬法：`buildSystemPrompt` 末尾统一算一次总量，超阈值就压 `MEMORY.md` 和日记的额度，并在注入内容里加一行明确的截断说明。
+- 这边：各文件分别有上限（6000／2000／6000／8000／3000／3000），**单文件的「被截断了」已经说了**（D085 的 `ctxBlock`），**但总量核算仍然没有**。
+- 风险：中文 2.8 万字符约 2 万 token，在 32k 窗口里偏重；各文件都没超，加起来仍然可能把窗口吃掉。
+- 搬法：`buildSystemPrompt` 末尾统一算一次总量，超阈值就压 `MEMORY.md` 和日记的额度，并说明压了谁。
 
 ### P2 工作区文件职责边界写死
 

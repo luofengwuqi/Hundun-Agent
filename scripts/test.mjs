@@ -65,7 +65,7 @@ ok(prompt.includes('MEMORY.md'), '提示里包含 MEMORY')
 ok(prompt.includes('记忆规则'), '提示里包含记忆规则')
 ok(prompt.includes('<longterm>'), '提示声明了 longterm 块')
 ok(
-  prompt.includes('BOOTSTRAP.md（第一次见他') && prompt.includes('怎么称呼他'),
+  prompt.includes('## Bootstrap Pending') && prompt.includes('怎么称呼他'),
   '档案为空时注入首次见面仪式'
 )
 ok(prompt.includes(life.dateStr()), '提示里带上了今天日期')
@@ -77,7 +77,9 @@ console.log('\n[1a] RULES.md：能改判断，改不了协议')
 const rulesPath = path.join(LIFE, 'RULES.md')
 const rulesSeed = fs.readFileSync(rulesPath, 'utf8')
 
-ok(!prompt.includes('他亲手写的规矩'), 'RULES.md 空着时一个字都不占上下文')
+// 空着就连文件块都不出（Project Context 的说明行里那句「RULES.md：他亲手写的规矩」
+// 是固定的目录说明，不算注入内容）
+ok(!prompt.includes('## RULES.md（他亲手写的规矩）'), 'RULES.md 空着时不起文件块，一个字都不占上下文')
 ok(life.rulesText() === '', '只有标题和引用的模板算「没写东西」')
 
 fs.writeFileSync(rulesPath, '# RULES.md\n\n> 一段说明\n\n## 我的规矩\n\n', 'utf8')
@@ -87,9 +89,9 @@ fs.writeFileSync(rulesPath, '# RULES.md\n\n## 我的规矩\n\n- 别叫我老板�
 const pRules = life.buildSystemPrompt({})
 ok(pRules.includes('别叫我老板'), 'RULES.md 写了就进上下文')
 ok(
-  pRules.indexOf('别叫我老板') < pRules.indexOf('=== 记忆规则 ==='),
+  pRules.indexOf('别叫我老板') < pRules.indexOf('## Memory（记忆规则）'),
   'RULES 排在记忆规则之前——能改判断，改不了块格式',
-  String(pRules.indexOf('别叫我老板')) + ' / ' + String(pRules.indexOf('=== 记忆规则 ==='))
+  String(pRules.indexOf('别叫我老板')) + ' / ' + String(pRules.indexOf('## Memory（记忆规则）'))
 )
 ok(pRules.includes('<commit>'), '协议部分照旧在，没有被 RULES 挤掉')
 
@@ -1227,18 +1229,22 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(life.bootstrapPending(), '全新的生活目录会种一份 BOOTSTRAP.md')
 
   const bsFirst = life.buildSystemPrompt()
-  ok(bsFirst.includes('BOOTSTRAP.md（第一次见他'), '第一轮提示词里带着仪式')
+  ok(bsFirst.includes('## Bootstrap Pending'), '第一轮提示词里有 Bootstrap Pending 段')
   ok(bsFirst.includes('这是仪式，不是关卡'), '带着「别挡在正事前面」这条')
   ok(bsFirst.includes('一次只问一个问题'), '带着「一次只问一个」')
+
+  // 顺序照 openclaw：命令在前，文件紧随其后（不是命令在末尾、文件在中间）
+  const iPending = bsFirst.indexOf('## Bootstrap Pending')
+  const iCtx = bsFirst.indexOf('# Project Context')
+  const iRitual = bsFirst.indexOf('## BOOTSTRAP.md（照上面那节走）')
+  ok(iPending > 0 && iPending < iCtx, 'Bootstrap Pending 在 Project Context 之前')
+  ok(iRitual > iCtx, 'BOOTSTRAP.md 全文是 Project Context 里的一个文件')
   ok(
-    bsFirst.indexOf('BOOTSTRAP.md（第一次见他') > bsFirst.indexOf('=== 输出规则 ==='),
-    '仪式排在输出规则之后（越靠后越像此刻的命令，原来夹在中间被冲淡）'
+    iRitual - iPending > 0 && iRitual - iPending < 2500,
+    '命令和它的文件之间只隔着 SOUL/IDENTITY/USER —— 离得开就认不出彼此'
   )
-  ok(
-    bsFirst.trim().endsWith('不要说「我在做初始化」。'),
-    '仪式是提示词的最后一段，后面不跟别的东西'
-  )
-  ok(bsFirst.includes('=== 怎么对待他 ==='), '有「怎么对待他」这一段（行为合同，不放在他改得动的 SOUL 里）')
+  ok(bsFirst.includes('第一句可见回复必须照 BOOTSTRAP.md'), '命令里写死「第一句必须照它来」')
+  ok(bsFirst.includes('## Care'), '有 Care 段（行为合同，不放在他改得动的 SOUL 里）')
   ok(
     bsFirst.includes('不许推断') && bsFirst.includes('那是查档案，不是聊天'),
     '带着「不许编、不许背档案」两条'
@@ -1823,7 +1829,7 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
   life.ensureLife()
   ok(life.bootstrapPending(), '老目录 + 空档案 → 补种一次仪式（今天没被问的成因就是这个）')
   ok(
-    life.buildSystemPrompt().includes('BOOTSTRAP.md（第一次见他'),
+    life.buildSystemPrompt().includes('## Bootstrap Pending'),
     '补种的仪式当轮就进了提示词'
   )
 
@@ -1878,6 +1884,72 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
     fs.readFileSync(soulPath, 'utf8').includes('我加的一行'),
     '手改过但忘了记录 → 也不覆盖（不做模糊匹配）'
   )
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
+console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
+
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const root = path.join(TMP, 'skel')
+  process.env.HUNDUN_LIFE_DIR = root
+  fs.rmSync(root, { recursive: true, force: true })
+  life.ensureLife()
+
+  const p = life.buildSystemPrompt()
+  const at = (s) => p.indexOf(s)
+  const order = (a, b, label) => ok(at(a) >= 0 && at(b) >= 0 && at(a) < at(b), label)
+
+  // 段与段的顺序（照 src/agents/system-prompt.ts 的组装顺序）
+  order('## Interaction Style', '## Execution Bias', 'Interaction Style 在 Execution Bias 之前')
+  order('## Execution Bias', '## Promised Work', 'Execution Bias 在 Promised Work 之前')
+  order('## Promised Work', '## Runtime Context', 'Promised Work 在 Runtime Context 之前')
+  order('## Runtime Context', '## Bootstrap Pending', 'Runtime Context 在 Bootstrap Pending 之前')
+  order('## Bootstrap Pending', '# Project Context', 'Bootstrap Pending 在 Project Context 之前')
+  order('# Project Context', '## Care', 'Project Context 在 Care 之前')
+  order('## Care', '## Memory（记忆规则）', 'Care 在记忆规则之前')
+  order('## Memory（记忆规则）', '## Output（输出规则）', '记忆规则在输出规则之前')
+
+  // 文件次序（照 openclaw 的 CONTEXT_FILE_ORDER：soul 20 / identity 30 / user 40 / bootstrap 60 / memory 70）
+  order('## SOUL.md（你是谁', '## IDENTITY.md', 'SOUL 在 IDENTITY 之前')
+  order('## IDENTITY.md', '## USER.md（关于他）', 'IDENTITY 在 USER 之前')
+  order('## USER.md（关于他）', '## BOOTSTRAP.md（照上面那节走）', 'USER 在 BOOTSTRAP 之前')
+  order('## BOOTSTRAP.md（照上面那节走）', '## MEMORY.md（长期记忆）', 'BOOTSTRAP 在 MEMORY 之前')
+
+  // 搬过来的判据要在，不是只搬了标题
+  ok(p.includes('温暖、合作、安静地支持他'), 'Interaction Style 搬了「安静地支持」')
+  ok(p.includes('Never') === false && p.includes('不戏剧化、不黏人'), 'Interaction Style 搬了「不许演过头」')
+  ok(p.includes('不要描述身体感受'), 'Interaction Style 搬了「不编身体感受与私生活」')
+  ok(p.includes('不要先问「要不要我帮你分析一下」'), 'Execution Bias 搬了「能答就答，别先问许可」')
+  ok(p.includes('「在做了」不是做完了'), 'Promised Work 搬了「过程不是结论」')
+  ok(p.includes('到点自己回来说结果'), 'Promised Work 和调度器对上了（承诺过的事自己回来）')
+  ok(p.includes('不要念文件名，不要提路径'), 'Care 搬了「别把内部结构暴露给他」')
+
+  // 实测踩到的：模型回了「芜柒。记住了。」但 USER.md 一个字没加。
+  // 「嘴上说记住了」和「真的写进去」是两件事，两处都要写死。
+  ok(p.includes('「记住了」这句话不算记'), '仪式里说清：说记住了不算记，要真的有块')
+  ok(p.includes('<profile>\n- 称呼｜'), '仪式里给了 profile 块的完整示例（光说「用 <profile> 记」它不会写）')
+  ok(p.includes('说「记住了」不算记'), '记忆规则里也有同一条判据')
+
+  // 截断必须说出来：不说的截断 = 模型以为自己看全了
+  const memPath = path.join(life.lifeDir(), 'MEMORY.md')
+  fs.writeFileSync(memPath, '# MEMORY.md\n\n' + '旧事一行。\n'.repeat(2000), 'utf8')
+  const cutP = life.buildSystemPrompt()
+  ok(cutP.includes('只加载了开头'), 'MEMORY.md 超长时，提示词里明说「后面你看不到」')
+  ok(cutP.includes('不要补全，也不要假装记得'), '截断提示带上了「当不知道」这条判据')
+
+  // 仪式走完：Bootstrap Pending 消失，但骨架其余部分一个都不能少
+  fs.writeFileSync(memPath, '# MEMORY.md\n\n（暂无）\n', 'utf8')
+  fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
+  fs.writeFileSync(path.join(life.lifeDir(), '.bootstrap'), 'skip 2026-11-05 测试', 'utf8')
+  const after = life.buildSystemPrompt()
+  ok(!after.includes('## Bootstrap Pending'), '仪式走完 → 命令段消失')
+  ok(!after.includes('## BOOTSTRAP.md（照上面那节走）'), '仪式走完 → 文件也不再注入')
+  ok(after.includes('## Interaction Style'), '仪式走完 → 语气层还在')
+  ok(after.includes('## Execution Bias'), '仪式走完 → 行动偏向还在')
+  ok(after.includes('## Care'), '仪式走完 → Care 还在')
+  ok(after.length < p.length, '去掉仪式后提示词确实变短了')
 
   process.env.HUNDUN_LIFE_DIR = prev
 }
