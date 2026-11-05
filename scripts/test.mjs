@@ -461,6 +461,111 @@ ok(typeof store.isQuietToday() === 'boolean', '今天静音是独立状态，不
 
 /* ---------------- 4. 界面 SSR ---------------- */
 
+console.log('\n[3c] 模型配置：opencode 格式，JSON 是唯一的源')
+
+const mm = require(path.join(ROOT, 'src/main/models.js'))
+process.env.HUNDUN_TEST_KEY = 'sk-from-env'
+
+const MODEL_OK = {
+  provider: {
+    deepseek: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'DeepSeek',
+      options: { baseURL: 'https://api.deepseek.com/v1', apiKey: '{env:HUNDUN_TEST_KEY}' },
+      models: {
+        'deepseek-chat': { name: 'DeepSeek Chat', limit: { context: 64000, output: 8000 } },
+        'deepseek-reasoner': { name: 'R1', limit: { context: 64000 } }
+      }
+    }
+  },
+  model: 'deepseek/deepseek-chat'
+}
+
+const nv = mm.normalize(MODEL_OK)
+ok(nv.ok, '一份合法配置能解析', nv.errors.join('；'))
+ok(nv.selected && nv.selected.modelId === 'deepseek-chat', '选中的模型是 JSON 里 model 指向的那个')
+ok(nv.selected.apiKey === 'sk-from-env', '{env:} 换成了真实的 key，而不是把占位符当 key 发出去')
+ok(nv.selected.contextWindow === 64000, 'limit.context 落到了 contextWindow 上')
+
+const noUrl = mm.normalize({ provider: { a: { models: { x: {} } } }, model: 'a/x' })
+ok(!noUrl.ok && noUrl.errors.some((e) => e.includes('baseURL')), '缺 baseURL 会被拦下，并指名道姓')
+
+const noModel = mm.normalize({ provider: { a: { options: { baseURL: 'https://x/v1' }, models: { x: {} } } }, model: 'a/nope' })
+ok(!noModel.ok && noModel.errors.some((e) => e.includes('nope')), 'model 指到不存在的模型，报出是哪一个')
+
+const dash = mm.normalize({ provider: { 'a/b': { options: { baseURL: 'https://x/v1' }, models: { x: {} } } }, model: 'a/b/x' })
+ok(!dash.ok, 'provider id 带斜杠会被拦：引用是 provider/model，带斜杠就切不开')
+
+const noRef = mm.normalize({ provider: { a: { options: { baseURL: 'https://x/v1' }, models: { x: {} } } } })
+ok(noRef.ok && noRef.warnings.some((w) => w.includes('没写 model')), '顶层没写 model 时自动挑第一个，并且说出来')
+
+delete process.env.HUNDUN_MISSING
+const missEnv = mm.normalize({
+  provider: { a: { options: { baseURL: 'https://x/v1', apiKey: '{env:HUNDUN_MISSING}' }, models: { x: {} } } },
+  model: 'a/x'
+})
+ok(missEnv.ok && missEnv.warnings.some((w) => w.includes('HUNDUN_MISSING')), '变量没设时说清楚是哪个变量，而不是给个空 key 让他猜')
+
+// {file:} 相对配置文件目录解析
+const keyFile = path.join(cfgDir, 'key.txt')
+fs.writeFileSync(keyFile, 'sk-from-file\n', 'utf8')
+const fromFile = mm.normalize(
+  { provider: { a: { options: { baseURL: 'https://x/v1', apiKey: '{file:key.txt}' }, models: { x: {} } } }, model: 'a/x' },
+  { baseDir: cfgDir }
+)
+ok(fromFile.selected.apiKey === 'sk-from-file', '{file:} 读到了文件内容，并去掉了尾换行')
+
+// --- store 层：JSON 是源，其它都是派生物 ---
+store.write({ modelConfig: MODEL_OK })
+const mcC1 = store.read()
+ok(mcC1.baseUrl === 'https://api.deepseek.com/v1', 'baseUrl 由 JSON 派生')
+ok(mcC1.apiKey === 'sk-from-env', 'apiKey 由 JSON 派生（占位符在这一层展开）')
+ok(mcC1.model === 'deepseek-chat', 'model 由 JSON 派生')
+
+// 派生值不落盘：否则 {env:} 就白写了，key 又躺回文件里
+const mcDisk = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+ok(mcDisk.modelConfig && mcDisk.modelConfig.model === 'deepseek/deepseek-chat', 'JSON 本身落盘了（它才是源）')
+ok(!('apiKey' in mcDisk) && !('baseUrl' in mcDisk) && !('model' in mcDisk), '派生的三个值不落盘，key 不进文件', JSON.stringify(mcDisk).slice(0, 120))
+
+// 换模型 = 改 JSON 里的 model 字段
+const mcSwapped = JSON.parse(JSON.stringify(MODEL_OK))
+mcSwapped.model = 'deepseek/deepseek-reasoner'
+store.write({ modelConfig: mcSwapped })
+ok(store.read().model === 'deepseek-reasoner', '改 model 字段就换了模型，不用再动别的')
+
+// 不合法 → 抛，而且一个字节都不写（半写是最坏的结果）
+const mcBefore = fs.readFileSync(cfgFile, 'utf8')
+let mcThrew = false
+try {
+  store.write({ modelConfig: { provider: { x: { models: { m: {} } } }, model: 'x/m' } })
+} catch {
+  mcThrew = true
+}
+ok(mcThrew, '不合法的配置会抛，不会静默接受')
+ok(fs.readFileSync(cfgFile, 'utf8') === mcBefore, '抛了就是真的没写：文件一个字节都没变')
+ok(store.read().model === 'deepseek-reasoner', '内存里的当前模型也没被带着改')
+
+// 文件被手改坏：要显式标记，并且绝不退回默认地址
+fs.writeFileSync(cfgFile, JSON.stringify({ modelConfig: { provider: { x: { models: { m: {} } } }, model: 'x/m' } }, null, 2))
+store._reset()
+const mcBroken = store.read()
+ok(mcBroken.modelBroken === true, '配置坏了要能看出来，而不是装作没事')
+ok(mcBroken.baseUrl === '' && mcBroken.model === '', '坏了就空着：空地址会当场报错，默认地址会带着错模型乱说话')
+
+// 老配置（只有手填三字段）→ 给一份等价的 JSON，但不落盘
+fs.writeFileSync(cfgFile, JSON.stringify({ baseUrl: 'https://api.moonshot.cn/v1', apiKey: 'sk-old', model: 'kimi-k2', temperature: 0.7, contextWindow: 32000 }, null, 2))
+store._reset()
+const legacyCfg = store.read()
+ok(legacyCfg.modelConfig === null, '老配置没有 modelConfig，先用着原来那三个字段')
+ok(legacyCfg.baseUrl === 'https://api.moonshot.cn/v1', '老配置照常能用，不因为升级就断了')
+const mcSeed = store.publicConfig().modelSeed
+ok(mcSeed && mcSeed.provider && mcSeed.provider.moonshot, '界面能拿到一份等价的 JSON 做起点', JSON.stringify(mcSeed).slice(0, 100))
+ok(mcSeed.model === 'moonshot/kimi-k2', 'mcSeed 里的 model 指向老配置那个模型')
+ok(mcSeed.provider.moonshot.options.apiKey === 'sk-old', 'mcSeed 把老 key 带过来了，他不用重填')
+
+// 收尾：留一份能用的配置，别把坏状态带给后面的界面测试
+store.write({ modelConfig: MODEL_OK })
+
 console.log('\n[4] 界面：SSR 渲染')
 
 const vuePlugin = {

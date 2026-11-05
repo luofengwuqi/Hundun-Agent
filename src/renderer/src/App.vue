@@ -1,12 +1,11 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import SettingsModal from './components/SettingsModal.vue'
+import SettingsPage from './components/SettingsPage.vue'
 import { renderMarkdown } from './markdown'
 
 const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
-const settingsOpen = ref(false)
 const quiet = ref(false)
 /**
  * 打扰的三个参数（D045／P-11）。**它们必须落库**——原来只有一个 ref，
@@ -17,7 +16,7 @@ const quiet = ref(false)
  */
 const disturb = ref({ on: false, windows: [], dailyLimit: 0 })
 const disturbOn = computed(() => !!disturb.value.on)
-/** D046：左栏只切视图（chat / quiet）。设置仍是弹窗，入口在左栏 */
+/** D046：左栏只切视图。D072 起设置也是一列（不再是弹窗），三项地位相同 */
 const view = ref('chat')
 const cfg = ref(null)
 const notice = ref('')
@@ -83,7 +82,8 @@ async function send(text) {
   const t = String(text ?? input.value).trim()
   if (!t || streaming.value) return
   if (!cfg.value?.hasApiKey) {
-    settingsOpen.value = true
+    // 没配好就不能说话。跳设置页而不是弹窗 —— 那儿能看见到底缺什么。
+    view.value = 'settings'
     return
   }
   notice.value = ''
@@ -148,7 +148,8 @@ function normDisturb(v) {
 
 async function saveDisturb(patch) {
   disturb.value = normDisturb({ ...disturb.value, ...patch })
-  cfg.value = await window.hundun.cfg.set({ disturb: disturb.value })
+  const r = await window.hundun.cfg.set({ disturb: disturb.value })
+  if (r && r.ok && r.cfg) cfg.value = r.cfg
 }
 
 function toggleDisturb() {
@@ -223,10 +224,21 @@ function closeWin() {
 }
 
 async function saveCfg(patch) {
-  cfg.value = await window.hundun.cfg.set(patch)
-  settingsOpen.value = false
+  const r = await window.hundun.cfg.set(patch)
+  if (r && r.ok && r.cfg) cfg.value = r.cfg
   notice.value = ''
   if (cfg.value.hasApiKey && messages.value.length === 0) opening()
+  return r
+}
+
+/** 设置页应用了模型配置：拿新配置回来，hasApiKey／派生值都变了 */
+function onCfgSaved(next) {
+  if (!next) return
+  const first = !cfg.value?.hasApiKey && next.hasApiKey
+  cfg.value = next
+  notice.value = ''
+  // 刚从「没配好」变成「配好了」：如果还没说过话，让它先开口
+  if (first && messages.value.length === 0) opening()
 }
 
 async function opening() {
@@ -276,8 +288,8 @@ onMounted(async () => {
   )
   offs.push(window.hundun.quiet.onState((on) => (quiet.value = on)))
 
-  if (!cfg.value.hasApiKey) {
-    settingsOpen.value = true
+  if (!cfg.value.hasApiKey || cfg.value.modelBroken) {
+    view.value = 'settings'
   } else {
     const st = await window.hundun.chat.state()
     if (st.history && st.history.length) {
@@ -358,7 +370,12 @@ onBeforeUnmount(() => {
           </svg>
           <span>打扰</span>
         </button>
-        <button class="rail-item" @click="settingsOpen = true" title="设置">
+        <button
+          class="rail-item"
+          :class="{ on: view === 'settings' }"
+          @click="view = 'settings'"
+          title="设置"
+        >
           <svg
             viewBox="0 0 24 24"
             width="18"
@@ -370,10 +387,9 @@ onBeforeUnmount(() => {
             stroke-linejoin="round"
             aria-hidden="true"
           >
-            <path d="M4 9h16" />
-            <path d="M4 15h16" />
-            <circle cx="9" cy="9" r="2" />
-            <circle cx="15" cy="15" r="2" />
+            <circle cx="12" cy="12" r="3.4" />
+            <path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8" />
+            <path d="M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9M18.5 18.5l-1.9-1.9M7.4 7.4L5.5 5.5" />
           </svg>
           <span>设置</span>
         </button>
@@ -519,8 +535,9 @@ onBeforeUnmount(() => {
           </p>
         </div>
       </section>
-    </div>
 
-    <SettingsModal v-if="settingsOpen" :cfg="cfg" @save="saveCfg" @close="settingsOpen = false" />
+      <!-- 设置是第三列，和「对话」「打扰」并列（D072）。放在 body 里才能吃到 flex 布局 -->
+      <SettingsPage v-if="cfg" v-show="view === 'settings'" :cfg="cfg" @saved="onCfgSaved" />
+    </div>
   </div>
 </template>

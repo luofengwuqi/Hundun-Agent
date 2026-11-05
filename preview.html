@@ -23,6 +23,8 @@
   --shadow-card: 0 1px 2px rgba(42, 33, 24, 0.05), 0 6px 18px rgba(42, 33, 24, 0.04);
   --radius: 10px;
   --titlebar-h: 46px;
+  /* 页面级大标题用衬线，正文仍是黑体。只在设置页的头用一次，别扩散 */
+  --serif: 'Noto Serif CJK SC', 'Noto Serif SC', 'Songti SC', Georgia, serif;
 }
 
 * {
@@ -1055,6 +1057,384 @@ textarea::placeholder {
 .sw.sm {
   transform: scale(0.92);
   transform-origin: right center;
+}
+
+/* ============================================================
+   设置页（D072）：从弹窗改成独立一列。
+   模型那块要装下一份 JSON 和一张 provider 列表，弹窗装不下。
+   ============================================================ */
+
+.set-col {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 34px max(28px, calc((100% - 700px) / 2)) 48px;
+}
+
+.set-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.set-head h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.set-sub {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.set-block {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 20px;
+}
+
+.set-block.last {
+  padding-bottom: 8px;
+}
+
+.set-block h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.set-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.set-title h2 {
+  margin-bottom: 10px;
+}
+
+.set-badge {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 1px 9px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.set-badge.bad {
+  color: var(--accent);
+  border-color: #e8c4c0;
+  background: var(--accent-soft);
+}
+
+.set-note {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.85;
+}
+
+.set-note code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ---- JSON 编辑区 ---- */
+
+.json-box {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.json-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-deep);
+}
+
+.json-file {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.json-spacer {
+  flex: 1;
+}
+
+.json-dirty {
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.json-edit {
+  display: block;
+  width: 100%;
+  min-height: 232px;
+  max-height: 420px;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  padding: 12px 14px;
+  background: transparent;
+  color: var(--ink);
+  font-family: ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  tab-size: 2;
+  user-select: text;
+  cursor: text;
+}
+
+/* ---- 解析结果 ---- */
+
+.preview {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pline {
+  display: flex;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  border-radius: 8px;
+  padding: 8px 11px;
+}
+
+.pline.bad {
+  background: var(--accent-soft);
+  color: #8d1f22;
+  border: 1px solid #eecdc9;
+}
+
+.pline.warn {
+  background: #fdf3dd;
+  color: #7a5a15;
+  border: 1px solid #ecd9ad;
+}
+
+.pmark {
+  flex: 0 0 auto;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.prov-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prov {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 12px;
+}
+
+.prov-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.prov-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prov-id {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.prov-tag {
+  margin-left: auto;
+  font-size: 11px;
+  color: #7a5a15;
+  background: #fdf3dd;
+  border: 1px solid #ecd9ad;
+  border-radius: 20px;
+  padding: 0 7px;
+}
+
+.prov-url {
+  margin-top: 2px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+.model-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-row:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.model-row:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.model-row.on {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.model-tick {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.model-row.on .model-tick {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.model-name {
+  flex: 0 0 auto;
+}
+
+.model-id {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-ctx {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* ---- 一行一条的配置 ---- */
+
+.act-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line-soft);
+}
+
+.cfg-row:last-child {
+  border-bottom: 0;
+}
+
+.cfg-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.cfg-label > span {
+  font-size: 13px;
+}
+
+.cfg-label > small {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.cfg-num {
+  flex: 0 0 auto;
+  width: 96px;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  background: #fffdf7;
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.cfg-act {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.about {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.about .dot {
+  color: var(--line);
+}
+
+.btn.sm {
+  padding: 3px 12px;
+  font-size: 12.5px;
 }
     </style>
     <!-- css:end -->

@@ -10,7 +10,11 @@ contextBridge.exposeInMainWorld('hundun', {
   cfg: {
     get: () => ipcRenderer.invoke('cfg:get'),
     set: (patch) => ipcRenderer.invoke('cfg:set', patch),
-    test: (patch) => ipcRenderer.invoke('cfg:test', patch)
+    test: (patch) => ipcRenderer.invoke('cfg:test', patch),
+    // 模型配置：预览（不写）／应用（要么整份成功要么整份失败）／从磁盘导入
+    previewModel: (text) => ipcRenderer.invoke('cfg:modelPreview', text),
+    applyModel: (payload) => ipcRenderer.invoke('cfg:modelApply', payload),
+    pickModelFile: () => ipcRenderer.invoke('cfg:pickModelFile')
   },
 
   life: {

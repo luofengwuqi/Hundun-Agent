@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, shell, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, Tray, Menu, shell, dialog, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -15,6 +15,21 @@ let tray = null
 let busy = false
 
 const ROOT = path.join(__dirname, '..', '..')
+
+/**
+ * JSON.parse 说的是「Unexpected token } in JSON at position 217」。
+ * 那个位置数字对他没有用 —— 换成第几行第几列，他才知道往哪儿看。
+ */
+function jsonError(text, e) {
+  const src = typeof text === 'string' ? text : ''
+  const m = /position (\d+)/.exec(String((e && e.message) || ''))
+  if (!m) return 'JSON 语法错误：' + ((e && e.message) || e)
+  const pos = Math.min(Number(m[1]), src.length)
+  const head = src.slice(0, pos)
+  const line = head.split('\n').length
+  const col = pos - head.lastIndexOf('\n')
+  return `JSON 语法错误：第 ${line} 行第 ${col} 列附近（多半是少了或多了逗号、引号）`
+}
 
 function resolvePreload() {
   const candidates = [
@@ -176,9 +191,79 @@ function registerIpc() {
 
   ipcMain.handle('cfg:get', () => store.publicConfig())
   ipcMain.handle('cfg:set', (_e, patch) => {
-    const next = store.write(patch)
-    refreshTrayMenu()
-    return { ...next, hasApiKey: Boolean(next.apiKey) }
+    try {
+      const next = store.write(patch)
+      refreshTrayMenu()
+      return { ok: true, cfg: { ...next, hasApiKey: Boolean(next.apiKey) } }
+    } catch (e) {
+      // 模型配置不合法时 write 会整份拒写，这里把逐条原因原样交回去
+      return { ok: false, errors: e.modelErrors || [e.message], warnings: e.modelWarnings || [] }
+    }
+  })
+
+  /**
+   * 只解析、不写。设置页每敲一个字就会来一次，所以它必须廉价且绝不产生副作用。
+   * 返回 providers 是为了界面能画出「这个 provider 下面有哪些模型」，点一下就等于改顶层 model。
+   */
+  ipcMain.handle('cfg:modelPreview', (_e, text) => {
+    let obj
+    try {
+      obj = typeof text === 'string' ? JSON.parse(text) : text
+    } catch (e) {
+      return { ok: false, errors: [jsonError(text, e)], warnings: [], providers: [], selected: null }
+    }
+    return store.previewModel(obj)
+  })
+
+  /** 应用一份模型配置。不合法则一个字段都不写。 */
+  ipcMain.handle('cfg:modelApply', (_e, payload) => {
+    let obj
+    try {
+      obj = typeof payload === 'string' ? JSON.parse(payload) : payload
+    } catch (e) {
+      return { ok: false, errors: [jsonError(payload, e)], warnings: [] }
+    }
+    try {
+      // 先预览一遍：要么带着警告成功，要么带着原因失败，不做「写进去一半」
+      const r = store.previewModel(obj)
+      if (!r.ok) return { ok: false, errors: r.errors, warnings: r.warnings }
+      const next = store.write({ modelConfig: obj })
+      refreshTrayMenu()
+      return {
+        ok: true,
+        warnings: r.warnings,
+        selected: r.selected,
+        cfg: { ...next, hasApiKey: Boolean(next.apiKey) }
+      }
+    } catch (e) {
+      return { ok: false, errors: e.modelErrors || [e.message], warnings: e.modelWarnings || [] }
+    }
+  })
+
+  /** 从磁盘挑一个 json / jsonc 读成文本。不猜编码，不修内容，原样交给编辑器。 */
+  ipcMain.handle('cfg:pickModelFile', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '选一份模型配置',
+      properties: ['openFile'],
+      filters: [
+        { name: 'JSON 配置', extensions: ['json', 'jsonc'] },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    })
+    if (r.canceled || !r.filePaths.length) return { ok: false, canceled: true }
+    const file = r.filePaths[0]
+    try {
+      let text = fs.readFileSync(file, 'utf8')
+      // JSONC 允许注释和尾逗号：opencode 两种都吃，我们照做，否则别人贴过来的配置会白报错
+      text = text
+        .replace(/^\uFEFF/, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/,(\s*[}\]])/g, '$1')
+      return { ok: true, path: file, name: path.basename(file), text }
+    } catch (e) {
+      return { ok: false, error: '读不了这个文件：' + e.message }
+    }
   })
   ipcMain.handle('cfg:test', async (_e, patch) => {
     const cfg = { ...store.read(), ...(patch || {}) }
