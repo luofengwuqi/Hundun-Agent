@@ -952,6 +952,78 @@ ok(soloTries === 1 && soloMsg === '401 没权限', '单模型时错误原样抛�
 // 收尾：留一份能用的单模型配置
 store.write({ modelConfig: MODEL_OK })
 
+console.log('\n[3f] 简单模式：选一家、填个 key，落盘仍是同一份 JSON')
+
+// 目录：只放真能说 OpenAI 兼容协议的。列一个说不了的服务商，只会让他在 404 里找原因。
+const sPresets = mm.presets()
+ok(sPresets.length >= 4, '目录里有几家可选的')
+ok(sPresets.every((p) => p.baseUrl.startsWith('http') || p.custom), '每一家的地址都是写死的常量，不靠他手填')
+ok(!sPresets.some((p) => /anthropic|gemini/i.test(p.id)), '不说 OpenAI 兼容协议的服务商不进目录')
+ok(sPresets.some((p) => p.noKey), '本地模型那一档标了「不用 key」，不该逼他填一个假的')
+
+const sCfg = mm.simpleToConfig(
+  { preset: 'deepseek', apiKey: 'sk-simple', model: 'deepseek-reasoner' },
+  { baseDir: cfgDir }
+)
+const sNorm = mm.normalize(sCfg, { baseDir: cfgDir })
+ok(sNorm.ok && sNorm.selected.modelId === 'deepseek-reasoner', '简单配置生成出来就能用：不用再过一遍手工填地址')
+ok(sNorm.selected.baseUrl === 'https://api.deepseek.com/v1', '地址来自目录，不是他手填的那个字符串')
+ok(sNorm.simple === true, '认得出现在是简单模式（不认出来，下次打开就退回 JSON 编辑器了）')
+
+const sBack = mm.configToSimple(sCfg)
+ok(sBack && sBack.preset === 'deepseek' && sBack.model === 'deepseek-reasoner', '简单配置能反推回界面上的选项')
+ok(mm.configToSimple(MODEL_OK) === null, '手写的 JSON（没有 x-hundun.simple）不会被硬认成简单模式')
+
+// 换一家：地址跟着换，旧家的 key 不带过去（那是别人的 key）
+const sSwitch = mm.simpleToConfig({ preset: 'moonshot', apiKey: 'sk-simple', model: '' }, { baseDir: cfgDir })
+ok(sSwitch.provider.moonshot.options.baseURL === 'https://api.moonshot.cn/v1', '换一家，地址自动换成那家的')
+ok(!Object.keys(sSwitch.provider).includes('deepseek'), '旧的服务商不留在配置里：留着的话 key 该填在哪就说不清了')
+ok(sSwitch.model === 'moonshot/kimi-k2-0905-preview', '没选模型时用目录里第一个')
+
+// 手填目录外的模型名：允许，但不编一个上下文长度出来
+const sExtra = mm.simpleToConfig({ preset: 'deepseek', apiKey: 'k', model: 'deepseek-chat-v9' }, { baseDir: cfgDir })
+const sExtraNorm = mm.normalize(sExtra, { baseDir: cfgDir })
+ok(sExtraNorm.ok && sExtraNorm.selected.modelId === 'deepseek-chat-v9', '目录里没有的模型名也能用（它们新发的模型不该等我们更新）')
+ok(sExtraNorm.selected.contextWindow === 0, '不知道上下文长度就空着，不编一个数')
+
+// 自定义：地址必须他说，不然没法发请求
+const sCustom = mm.simpleToConfig(
+  { preset: 'custom', baseUrl: 'https://api.example.cn/v1', apiKey: 'k', model: 'my-model' },
+  { baseDir: cfgDir }
+)
+const sCustomNorm = mm.normalize(sCustom, { baseDir: cfgDir })
+ok(sCustomNorm.ok && sCustomNorm.selected.baseUrl === 'https://api.example.cn/v1', '自定义服务商用他填的地址')
+const sCustomBad = mm.normalize(mm.simpleToConfig({ preset: 'custom', apiKey: 'k', model: 'm' }, { baseDir: cfgDir }))
+ok(!sCustomBad.ok, '自定义但没填地址 → 当场报错，而不是用个默认地址乱说话')
+
+// key 里带占位符就原样写进去：展开再落盘等于把 key 又抄成明文
+const sEnv = mm.simpleToConfig({ preset: 'deepseek', apiKey: '{env:HUNDUN_TEST_KEY}', model: 'deepseek-chat' }, { baseDir: cfgDir })
+ok(sEnv.provider.deepseek.options.apiKey === '{env:HUNDUN_TEST_KEY}', '简单模式填的 {env:} 原样留在 JSON 里')
+process.env.HUNDUN_TEST_KEY = 'sk-from-env-2'
+ok(mm.normalize(sEnv).selected.apiKey === 'sk-from-env-2', '到解析那一层才展开成真的 key')
+
+// store 层：走 / 不走 简单模式，落盘的都是同一份 JSON
+const sApply = store.applySimple({ preset: 'qwen', apiKey: 'sk-q', model: 'qwen-plus' })
+ok(sApply.ok && store.read().model === 'qwen-plus', '简单模式直接能用')
+const sDisk = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+ok(sDisk.modelConfig && sDisk.modelConfig.model === 'qwen/qwen-plus', '落盘的仍是那个 JSON，不是另一份简单配置')
+ok(store.publicConfig().modelSimple.preset === 'qwen', '界面下次打开还是简单模式那一栏')
+ok(!('baseUrl' in sDisk) && !('apiKey' in sDisk), '派生值照旧不落盘')
+
+// 只改 key：不能把备用链的顺序一起冲掉
+const sChainCfg = JSON.parse(JSON.stringify(sEnv))
+sChainCfg['x-hundun'].modelOrder = ['deepseek/deepseek-chat', 'deepseek/deepseek-reasoner']
+sChainCfg.model = 'deepseek/deepseek-chat'
+store.write({ modelConfig: sChainCfg })
+store.setApiKey('sk-new')
+ok(store.read().modelChain.length === 2, '换 key 不动备用链（冲掉的话，主模型一挂就没人接）')
+ok(store.read().apiKey === 'sk-new', 'key 换过来了')
+store.setApiKey('')
+ok(store.publicConfig().hasApiKey === false, '清空 key 也算数，界面据此把他送回设置页')
+
+// 收尾：留一份能用的单模型配置
+store.write({ modelConfig: MODEL_OK })
+
 console.log('\n[4] 界面：SSR 渲染')
 
 const vuePlugin = {

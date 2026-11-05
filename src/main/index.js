@@ -205,6 +205,20 @@ function registerIpc() {
   }))
 
   ipcMain.handle('cfg:get', () => store.publicConfig())
+
+  /**
+   * 外链只在主进程开，且只放行 https。
+   *
+   * 设置页里有一处「去 DeepSeek 拿一个 key」，地址来自主进程的目录常量，
+   * 但这一层不能因为它「来自常量」就不设防 —— 渲染进程能调的东西，
+   * 迟早会有人传别的东西进来。
+   */
+  ipcMain.handle('app:openExternal', (_e, url) => {
+    const s = String(url || '').trim()
+    if (!/^https:\/\//i.test(s)) return { ok: false, error: '只允许 https 链接' }
+    shell.openExternal(s)
+    return { ok: true }
+  })
   ipcMain.handle('cfg:set', (_e, patch) => {
     try {
       const next = store.write(patch)
@@ -242,14 +256,9 @@ function registerIpc() {
       // 先预览一遍：要么带着警告成功，要么带着原因失败，不做「写进去一半」
       const r = store.previewModel(obj)
       if (!r.ok) return { ok: false, errors: r.errors, warnings: r.warnings }
-      const next = store.write({ modelConfig: obj })
+      const out = store.applyModelConfig(obj)
       refreshTrayMenu()
-      return {
-        ok: true,
-        warnings: r.warnings,
-        selected: r.selected,
-        cfg: { ...next, hasApiKey: Boolean(next.apiKey) }
-      }
+      return { ok: true, warnings: r.warnings, selected: r.selected, cfg: out.cfg }
     } catch (e) {
       return { ok: false, errors: e.modelErrors || [e.message], warnings: e.modelWarnings || [] }
     }
@@ -287,6 +296,40 @@ function registerIpc() {
       return { ok: false, error: '配置里没有这个模型：' + ref }
     }
     return { ok: true, config: r.config, errors: pv.errors, warnings: pv.warnings }
+  })
+
+  /**
+   * 简单模式：选一家、选一个、填个 key。
+   *
+   * 它不落成另一份配置，而是现场生成一份 JSON，再走上面那条「预览 → 写入」——
+   * 所以两种模式共用一套校验和一条备用链，不存在「简单模式能用、JSON 那边认不出」这种事。
+   * 目录里的地址是常量，这里不收他改的地址（要改就去自定义/直接写 JSON）。
+   */
+  ipcMain.handle('cfg:modelSimple', (_e, simple) => {
+    try {
+      const out = store.applySimple(simple)
+      refreshTrayMenu()
+      return out
+    } catch (e) {
+      return { ok: false, errors: e.modelErrors || [e.message], warnings: e.modelWarnings || [] }
+    }
+  })
+
+  /** 设置页要画的目录。真值是常量，但放在主进程：界面那份迟早会和服务商一起过期。 */
+  ipcMain.handle('cfg:modelPresets', () => models.presets())
+
+  /**
+   * 只换 key。走上一步是一样的校验，但**不重新生成 JSON** ——
+   * 重新生成会把自定义服务商的模型、备用链的顺序一起冲掉。
+   */
+  ipcMain.handle('cfg:setKey', (_e, key) => {
+    try {
+      store.setApiKey(key)
+      refreshTrayMenu()
+      return { ok: true, cfg: store.publicConfig() }
+    } catch (e) {
+      return { ok: false, errors: e.modelErrors || [e.message], warnings: e.modelWarnings || [] }
+    }
   })
 
   /** 从磁盘挑一个 json / jsonc 读成文本。不猜编码，不修内容，原样交给编辑器。 */

@@ -5,6 +5,10 @@
  *
  * 模型这块照 opencode 的格式来：一份 JSON 说清有哪些 provider、各自有哪些模型、
  * 现在用哪个。**JSON 是唯一的源**，写进去之后 baseUrl／apiKey／model 都由它算出来。
+ *
+ * 但格式是给机器看的，第一句话是给人说的（D077）：所以上面多一栏「简单」——
+ * 选一家、选一个、填个 key，完事。它不落成另一份配置，而是现场生成同一份 JSON，
+ * 所以下面那栏里能看见它写成了什么，「直接写 JSON」也没被拿走。
  */
 import { ref, computed, onMounted, watch } from 'vue'
 
@@ -16,7 +20,147 @@ const LOGO = './logo.svg'
 const props = defineProps({ cfg: { type: Object, required: true } })
 const emit = defineEmits(['saved'])
 
-/* ---------------- 模型 ---------------- */
+/* ---------------- 简单模式（D077） ---------------- */
+
+const presets = ref([])
+const simple = ref({ preset: '', baseUrl: '', apiKey: '', model: '' })
+const sMsg = ref('')
+const sKind = ref('')
+const sBusy = ref(false)
+/** 他手填的模型名不在目录里时，多出来一个输入框 */
+const sCustomModel = ref('')
+/** 哪一栏：认得出目录就是简单，认不出（手写的 JSON、多 provider）就直接给他 JSON */
+const view = ref(props.cfg.modelSimple ? 'simple' : 'json')
+/** 配好之后表单是收起来的 —— 每天要看的是「在用什么」，不是六个输入框 */
+const editing = ref(false)
+
+/**
+ * 去服务商后台拿 key。
+ *
+ * 走主进程的 shell.openExternal 而不是 <a href>：渲染进程只是个浏览器，
+ * 直接开外链会在应用窗口里把界面整个换掉，而且回不来。
+ */
+function openKey(url) {
+  if (url) window.hundun.openExternal(url)
+}
+
+const curPreset = computed(() => presets.value.find((p) => p.id === simple.value.preset) || null)
+
+/** 目录里的模型 + 他可能手填的那个。手填的那个单独标出来，不然它会在列表里凭空消失 */
+const sModels = computed(() => {
+  const p = curPreset.value
+  if (!p) return []
+  const list = p.models.map((m) => ({ id: m.id, name: m.name, extra: false }))
+  const cur = String(simple.value.model || '').trim()
+  if (cur && !list.some((m) => m.id === cur)) list.push({ id: cur, name: cur, extra: true })
+  return list
+})
+
+const sNeedsKey = computed(() => !curPreset.value?.noKey && !curPreset.value?.custom)
+
+function loadPresets() {
+  const c = props.cfg.modelSimple
+  if (!c) return
+  simple.value = { ...simple.value, ...c }
+  // 还没配过就先给他看「都有哪几家」。默认停在 DeepSeek 表单上，等于替他已经选了
+  if (!props.cfg.hasApiKey && !c.apiKey) simple.value.preset = ''
+  // 存的是「目录外的那个模型名」时，把它放进手填框，免得他以为丢了
+  const p = presets.value.find((x) => x.id === simple.value.preset)
+  if (p && c.model && !p.custom && !p.models.some((m) => m.id === c.model)) sCustomModel.value = c.model
+}
+
+onMounted(async () => {
+  try {
+    presets.value = await window.hundun.cfg.presets()
+  } catch {}
+  // 目录回来之后再过一遍：目录外的模型名要认出来得先有目录
+  loadPresets()
+})
+
+/**
+ * 选服务商 = 一次真正的切换，不是「改了还没存」。
+ * 换一家还留着一个用不了的模型名和别人的 key，下次打开会是个说不清的半成品；
+ * 而切走再切回来想把 key 找回来 —— 那种期待不该靠界面上的一行字符串来满足。
+ */
+async function pickPreset(p) {
+  const before = { ...simple.value }
+  const key = before.preset === p.id ? before.apiKey : ''
+  simple.value = {
+    preset: p.id,
+    baseUrl: p.custom ? before.baseUrl || '' : '',
+    apiKey: key,
+    model: p.models[0]?.id || (p.custom ? String(before.model || '') : '')
+  }
+  if (p.custom) sCustomModel.value = before.model || ''
+  sMsg.value = ''
+  sKind.value = ''
+  // 换一家 = 现在就存，不给「改了还没应用」留半截状态。缺 key 的那几家先别存，等填完再说
+  if (p.noKey || String(key).trim()) await saveModel()
+  else editing.value = true
+}
+
+/** 只改当前用的那个：目录、地址都不动，所以走「只换 key」那条更窄的路 */
+async function saveModel() {
+  const p = curPreset.value
+  if (!p) return
+  const model = String(simple.value.model || '').trim() || (p.models[0]?.id ?? '')
+  if (sNeedsKey.value && !String(simple.value.apiKey || '').trim()) {
+    sMsg.value = '先填 API Key'
+    sKind.value = 'bad'
+    return
+  }
+  if (p.custom && !String(simple.value.baseUrl || '').trim()) {
+    sMsg.value = '自定义服务商要填接口地址'
+    sKind.value = 'bad'
+    return
+  }
+  sBusy.value = true
+  sMsg.value = ''
+  const r = await window.hundun.cfg.applySimple({ ...simple.value, model })
+  sBusy.value = false
+  if (!r.ok) {
+    sMsg.value = (r.errors || ['没存上']).join('；')
+    sKind.value = 'bad'
+    return
+  }
+  simple.value.model = model
+  sMsg.value = '已保存'
+  sKind.value = 'ok'
+  if (r.cfg) emit('saved', r.cfg)
+}
+
+/** 换 key 不动模型：唯一的理由是不该因为改个 key 就把备用链的顺序冲掉 */
+async function saveKey() {
+  sBusy.value = true
+  const r = await window.hundun.cfg.setKey(simple.value.apiKey)
+  sBusy.value = false
+  if (!r.ok) {
+    sMsg.value = (r.errors || ['没存上']).join('；')
+    sKind.value = 'bad'
+    return
+  }
+  sMsg.value = '已保存'
+  sKind.value = 'ok'
+  if (r.cfg) emit('saved', r.cfg)
+}
+
+/** 手填模型名：加进目录之外的那一格，然后照常保存 */
+function useTypedModel() {
+  const v = String(sCustomModel.value || '').trim()
+  if (!v) return
+  simple.value.model = v
+  saveModel()
+}
+
+/** 已经配好、而且默认在简单栏：这时候它是一张卡片，不是一堆下拉框 */
+/** 已经配好、而且认得出是简单配置：这时候它是一张卡片，不是一堆下拉框 */
+const showCard = computed(
+  () => Boolean(curPreset.value) && Boolean(props.cfg.hasApiKey) && !props.cfg.modelBroken
+)
+/** JSON 里带了备用模型或改了排序：简单栏只画第一个，装不下这个事实，得说出来 */
+const multiInJson = computed(() => (props.cfg.modelChain || []).length > 1)
+
+/* ---------------- 模型（直接写 JSON） ---------------- */
 
 const text = ref('')
 const preview = ref(null) // { ok, errors, warnings, providers, selected }
@@ -187,6 +331,13 @@ function onDrop(i) {
 const showJson = ref(false)
 const adding = ref(false)
 
+/** 在最底下用一句人话说清那份 JSON 里现在是什么，不然「没了吗」得自己去下面找 */
+const jsonSummary = computed(() => {
+  const c = chain.value
+  if (!c.length) return ''
+  return c.length === 1 ? '现在是一份没改过的简单配置' : `JSON 里排了 ${c.length} 个模型，前${c.length - 1}个是备用`
+})
+
 async function importFile() {
   const r = await window.hundun.cfg.pickModelFile()
   if (!r || r.canceled) return
@@ -349,143 +500,294 @@ const dirLabel = computed(() => {
           <h2>模型</h2>
           <span
             class="set-badge"
-            :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey, warn: dirty }"
+            :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey, warn: dirty && view === 'json' }"
           >
             {{ badgeText }}
           </span>
         </div>
-        <p class="set-note">
-          排在前面的先用，连不上就换下一个。拖动卡片也能改顺序。key 写成
-          <code>{env:变量名}</code> 或 <code>{file:路径}</code>，那样它不会进配置文件。
-        </p>
 
-        <!-- 解析结果：错误放最上面，因为下面的卡片全都建在它上面 -->
-        <div v-if="preview && (preview.errors?.length || preview.warnings?.length)" class="preview">
-          <div v-if="preview.errors?.length" class="pline bad">
-            <span class="pmark">×</span>
-            <div>
-              <div v-for="(e, i) in preview.errors" :key="'e' + i">{{ e }}</div>
-            </div>
-          </div>
-          <div v-if="preview.warnings?.length" class="pline warn">
-            <span class="pmark">!</span>
-            <div>
-              <div v-for="(w, i) in preview.warnings" :key="'w' + i">{{ w }}</div>
-            </div>
-          </div>
-        </div>
+        <div class="switch">
+          <button :class="{ on: view === 'simple' }" @click="view = 'simple'">简单</button>
+          <button :class="{ on: view === 'json' }" @click="view = 'json'">直接写 JSON</button>        </div>
 
-        <!-- 一条链：第一张是现在用的，后面按顺序备用 -->
-        <div v-if="chain.length" class="mchain">
-          <div
-            v-for="(m, i) in chain"
-            :key="refOf(m)"
-            class="mcard"
-            :class="{ head: i === 0, over: dragOver === i && dragFrom !== i }"
-            draggable="true"
-            @dragstart="onDragStart(i, $event)"
-            @dragover.prevent="dragOver = i"
-            @dragleave="dragOver = -1"
-            @drop.prevent="onDrop(i)"
-            @dragend="dragOver = -1"
-          >
-            <span class="mrank">{{ i + 1 }}</span>
-            <div class="mmain">
-              <div class="mline">
-                <span class="mname">{{ m.modelName }}</span>
-                <span v-if="i === 0" class="mtag">先用这个</span>
-                <span v-else class="mtag alt">备用</span>
-              </div>
-              <div class="msub">
-                {{ m.providerName }}<span v-if="m.modelId !== m.modelName"> · {{ m.modelId }}</span
-                ><span v-if="m.contextWindow"> · {{ fmtCtx(m.contextWindow) }}</span>
-                <span
-                  v-if="tested[refOf(m)] && tested[refOf(m)].state !== 'run'"
-                  class="mtest"
-                  :class="tested[refOf(m)].state"
-                  :title="tested[refOf(m)].detail || '连上了'"
-                >
-                  {{ tested[refOf(m)].state === 'ok' ? '通' : '不通' }}
-                </span>
-              </div>
-              <div class="murl">{{ m.baseUrl }}</div>
-            </div>
-            <div class="mops">
-              <button class="mop" title="只测这一个" @click="testOne(m)">
-                {{ tested[refOf(m)]?.state === 'run' ? '…' : '测' }}
-              </button>
-              <button v-if="i > 0" class="mop" title="设为先用" @click="setHead(m)">先用</button>
-              <button v-if="i > 0" class="mop" title="上移" @click="moveUp(m, i)">↑</button>
-              <button v-if="i < chain.length - 1" class="mop" title="下移" @click="moveDown(m, i)">
-                ↓
-              </button>
-              <button v-if="chain.length > 1" class="mop del" title="移出列表" @click="drop(m)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-        <p v-else-if="!preview || !preview.errors?.length" class="empty-chain">
-          还没有模型。下面写一份 JSON，或者从文件导入。
-        </p>
+        <!-- ================= 简单 ================= -->
+        <div v-if="view === 'simple'" class="simple">
+          <p v-if="!showCard" class="set-note">
+            选一个模型服务商，把它的 API Key 填进来就能用了。想配好几个、排备用顺序，切到「直接写
+            JSON」。
+          </p>
 
-        <div class="chain-foot">
-          <button
-            class="mini chain-toggle"
-            :disabled="!editable || !candidates.length"
-            @click="adding = !adding"
-          >
-            {{ adding ? '收起' : '+ 添加模型' }}
-          </button>
-          <span v-if="editable && !candidates.length" class="chain-hint">
-            配置里的模型都已经在列表里了
-          </span>
-          <span v-if="editMsg" class="status" :class="editKind">{{ editMsg }}</span>
-        </div>
-
-        <!-- 候选：配置里有、但还没排进链的 -->
-        <div v-if="adding && candidates.length" class="cand">
-          <div v-for="p in candidates" :key="p.id" class="cand-group">
-            <div class="cand-head">
-              {{ p.name }} <span class="cand-id">{{ p.id }}</span>
-            </div>
-            <button v-for="m in p.models" :key="m.id" class="cand-row" @click="addOne(p, m)">
-              <span class="cand-name">{{ m.name }}</span>
-              <span class="cand-mid">{{ m.id }}</span>
-              <span v-if="m.context" class="cand-ctx">{{ fmtCtx(m.context) }}</span>
-              <span class="cand-plus">+</span>
+          <!-- 还没选服务商：一排按钮 -->
+          <div v-if="!simple.preset" class="sgrid">
+            <button v-for="p in presets" :key="p.id" class="sprov" @click="pickPreset(p)">
+              <span class="sprov-name">{{ p.name }}</span>
+              <span class="sprov-meta">{{ p.custom ? '自己填地址' : p.noKey ? '不用 key' : p.models.length + ' 个模型' }}</span>
             </button>
           </div>
+
+          <template v-else>
+            <!-- 已经配好的样子：一张卡，不是一堆输入框 -->
+            <div v-if="showCard" class="mcard head">
+              <span class="mrank">1</span>
+              <div class="mmain">
+                <div class="mline">
+                  <span class="mname">{{ curPreset.name }}</span>
+                  <span class="mtag">先用这个</span>
+                </div>
+                <div class="msub">
+                  {{ sModels.find((m) => m.id === simple.model)?.name || simple.model }}
+                  <span v-if="simple.model && simple.model !== (sModels.find((m) => m.id === simple.model)?.name || '')">
+                    · {{ simple.model }}</span
+                  >
+                </div>
+                <div class="murl">{{ props.cfg.baseUrl }}</div>
+              </div>
+              <div class="mops" style="opacity: 1">
+                <button class="mop" @click="simple.preset = ''">换一家</button>
+              </div>
+            </div>
+
+            <!-- 要改的地方：只在没配好，或者他点了「改」时出现 -->
+            <div v-if="!showCard || editing" class="sform">
+              <div class="cfg-row">
+                <div class="cfg-label">
+                  <span>服务商</span>
+                  <small v-if="curPreset.custom">任何说 OpenAI 兼容接口的服务，地址里一般带 /v1</small>
+                  <small v-else>{{ curPreset.name }}</small>
+                </div>
+                <button class="mini" @click="simple.preset = ''">换一家</button>
+              </div>
+
+              <div v-if="curPreset.custom" class="cfg-row">
+                <div class="cfg-label">
+                  <span>接口地址</span>
+                  <small>形如 https://api.example.com/v1</small>
+                </div>
+                <input v-model.trim="simple.baseUrl" class="cfg-text" placeholder="https://" spellcheck="false" />
+              </div>
+
+              <div v-if="sNeedsKey || curPreset.custom" class="cfg-row">
+                <div class="cfg-label">
+                  <span>API Key</span>
+                  <small>
+                    <a v-if="curPreset.keyUrl" class="slink" @click.prevent="openKey(curPreset.keyUrl)">
+                      去 {{ curPreset.name }} 拿一个
+                    </a>
+                    <span v-else>存在本机 config.json，权限 600，不会发到别处</span>
+                  </small>
+                </div>
+                <input
+                  v-model.trim="simple.apiKey"
+                  class="cfg-text"
+                  type="password"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="sk-…"
+                />
+              </div>
+
+              <div class="cfg-row">
+                <div class="cfg-label">
+                  <span>用哪个模型</span>
+                  <small>排在前面的通常更聪明，也通常更贵</small>
+                </div>
+                <div class="smodels">
+                  <button
+                    v-for="m in sModels"
+                    :key="m.id"
+                    class="smodel"
+                    :class="{ on: simple.model === m.id }"
+                    @click="simple.model = m.id"
+                  >
+                    <span class="smodel-name">{{ m.name }}</span>
+                    <span v-if="m.extra" class="smodel-tag">自己填的</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="cfg-row">
+                <div class="cfg-label">
+                  <span>目录里没有</span>
+                  <small>它们新发的模型，直接填名字用</small>
+                </div>
+                <div class="sadd">
+                  <input
+                    v-model.trim="sCustomModel"
+                    class="cfg-text"
+                    spellcheck="false"
+                    :placeholder="curPreset.models[0]?.id || '模型名'"
+                    @keydown.enter.prevent="useTypedModel"
+                  />
+                  <button class="mini" :disabled="!sCustomModel.trim() || sBusy" @click="useTypedModel">用这个</button>
+                </div>
+              </div>
+
+              <div class="sact">
+                <button v-if="!showCard" class="btn primary sm" :disabled="sBusy" @click="saveModel">
+                  {{ sBusy ? '保存中…' : '就它了' }}
+                </button>
+                <button v-else class="btn primary sm" :disabled="sBusy" @click="saveKey">
+                  {{ sBusy ? '保存中…' : '保存密钥' }}
+                </button>
+                <span v-if="sMsg" class="status" :class="sKind">{{ sMsg }}</span>
+              </div>
+            </div>
+
+            <div v-else class="sact">
+              <button class="mini" @click="editing = true">改密钥 / 换模型</button>
+              <span class="json-spacer" />
+              <span class="status" :class="testKind">{{ testMsg }}</span>
+              <button class="btn sm" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连接' }}</button>
+            </div>
+
+            <p v-if="multiInJson" class="chain-hint smulti">
+              这份配置里排了 {{ chain.length }} 个模型、按顺序备用 —— 这里只显示第一个。改那边请去「直接写
+              JSON」，这儿一存会把备用链换掉。
+            </p>
+          </template>
         </div>
 
-        <div class="act-row">
-          <button class="mini" @click="importFile">从文件导入</button>
-          <button class="mini" @click="showJson = !showJson">
-            {{ showJson ? '收起 JSON' : '编辑 JSON' }}
-          </button>
-          <span class="json-file" v-if="imported" :title="imported">{{ imported }}</span>
-          <span class="json-spacer" />
-          <span class="status" :class="testKind">{{ testMsg }}</span>
-          <button class="btn sm" :disabled="testing" @click="test">
-            {{ testing ? '测试中…' : '测试连接' }}
-          </button>
-        </div>
+        <!-- ================= JSON ================= -->
+        <div v-else class="simple">
+          <p class="set-note">
+            排在前面的先用，连不上就换下一个。拖动卡片也能改顺序。key 写成
+            <code>{env:变量名}</code> 或 <code>{file:路径}</code>，那样它不会进配置文件。
+          </p>
 
-        <div v-if="showJson" class="json-box json-fold">
-          <div class="json-bar">
-            <button class="mini" :disabled="!preview || !preview.ok" @click="formatJson">
-              格式化
+          <!-- 解析结果：错误放最上面，因为下面的卡片全都建在它上面 -->
+          <div v-if="preview && (preview.errors?.length || preview.warnings?.length)" class="preview">
+            <div v-if="preview.errors?.length" class="pline bad">
+              <span class="pmark">×</span>
+              <div>
+                <div v-for="(e, i) in preview.errors" :key="'e' + i">{{ e }}</div>
+              </div>
+            </div>
+            <div v-if="preview.warnings?.length" class="pline warn">
+              <span class="pmark">!</span>
+              <div>
+                <div v-for="(w, i) in preview.warnings" :key="'w' + i">{{ w }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 一条链：第一张是现在用的，后面按顺序备用 -->
+          <div v-if="chain.length" class="mchain">
+            <div
+              v-for="(m, i) in chain"
+              :key="refOf(m)"
+              class="mcard"
+              :class="{ head: i === 0, over: dragOver === i && dragFrom !== i }"
+              draggable="true"
+              @dragstart="onDragStart(i, $event)"
+              @dragover.prevent="dragOver = i"
+              @dragleave="dragOver = -1"
+              @drop.prevent="onDrop(i)"
+              @dragend="dragOver = -1"
+            >
+              <span class="mrank">{{ i + 1 }}</span>
+              <div class="mmain">
+                <div class="mline">
+                  <span class="mname">{{ m.modelName }}</span>
+                  <span v-if="i === 0" class="mtag">先用这个</span>
+                  <span v-else class="mtag alt">备用</span>
+                </div>
+                <div class="msub">
+                  {{ m.providerName }}<span v-if="m.modelId !== m.modelName"> · {{ m.modelId }}</span
+                  ><span v-if="m.contextWindow"> · {{ fmtCtx(m.contextWindow) }}</span>
+                  <span
+                    v-if="tested[refOf(m)] && tested[refOf(m)].state !== 'run'"
+                    class="mtest"
+                    :class="tested[refOf(m)].state"
+                    :title="tested[refOf(m)].detail || '连上了'"
+                  >
+                    {{ tested[refOf(m)].state === 'ok' ? '通' : '不通' }}
+                  </span>
+                </div>
+                <div class="murl">{{ m.baseUrl }}</div>
+              </div>
+              <div class="mops">
+                <button class="mop" title="只测这一个" @click="testOne(m)">
+                  {{ tested[refOf(m)]?.state === 'run' ? '…' : '测' }}
+                </button>
+                <button v-if="i > 0" class="mop" title="设为先用" @click="setHead(m)">先用</button>
+                <button v-if="i > 0" class="mop" title="上移" @click="moveUp(m, i)">↑</button>
+                <button v-if="i < chain.length - 1" class="mop" title="下移" @click="moveDown(m, i)">
+                  ↓
+                </button>
+                <button v-if="chain.length > 1" class="mop del" title="移出列表" @click="drop(m)">
+                  ✕
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else-if="!preview || !preview.errors?.length" class="empty-chain">
+            还没有模型。下面写一份 JSON，或者从文件导入。
+          </p>
+
+          <!-- 一份没动过的简单配置：不用再跟他解释一遍，想添备用的才点开 -->
+          <div v-if="chain.length === 1" class="squiet">
+            这是那份 JSON 生成的，平时不用看。
+            <button class="mini" @click="showJson = true">展开看看</button>
+          </div>
+
+          <div v-else class="chain-foot">
+            <button
+              class="mini chain-toggle"
+              :disabled="!editable || !candidates.length"
+              @click="adding = !adding"
+            >
+              {{ adding ? '收起' : '+ 添加模型' }}
             </button>
+            <span v-if="editable && !candidates.length" class="chain-hint">
+              配置里的模型都已经在列表里了
+            </span>
+            <span v-if="editMsg" class="status" :class="editKind">{{ editMsg }}</span>
+          </div>
+
+          <!-- 候选：配置里有、但还没排进链的 -->
+          <div v-if="adding && candidates.length" class="cand">
+            <div v-for="p in candidates" :key="p.id" class="cand-group">
+              <div class="cand-head">
+                {{ p.name }} <span class="cand-id">{{ p.id }}</span>
+              </div>
+              <button v-for="m in p.models" :key="m.id" class="cand-row" @click="addOne(p, m)">
+                <span class="cand-name">{{ m.name }}</span>
+                <span class="cand-mid">{{ m.id }}</span>
+                <span v-if="m.context" class="cand-ctx">{{ fmtCtx(m.context) }}</span>
+                <span class="cand-plus">+</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="act-row">
+            <button class="mini" @click="importFile">从文件导入</button>
+            <button v-if="chain.length > 1 || showJson" class="mini" @click="showJson = !showJson">
+              {{ showJson ? '收起 JSON' : '编辑 JSON' }}
+            </button>
+            <span class="json-file" v-if="imported" :title="imported">{{ imported }}</span>
             <span class="json-spacer" />
-            <button class="btn primary sm" :disabled="applying || !dirty" @click="apply()">
-              {{ applying ? '应用中…' : '应用' }}
+            <span class="status" :class="testKind">{{ testMsg }}</span>
+            <button class="btn sm" :disabled="testing" @click="test">
+              {{ testing ? '测试中…' : '测试连接' }}
             </button>
           </div>
-          <textarea v-model="text" class="json-edit" spellcheck="false" autocomplete="off" />
-        </div>
 
-        <div v-if="applyMsg" class="act-row">
-          <span class="status" :class="applyKind">{{ applyMsg }}</span>
+          <div v-if="showJson" class="json-box json-fold">
+            <div class="json-bar">
+              <button class="mini" :disabled="!preview || !preview.ok" @click="formatJson">格式化</button>
+              <span class="json-spacer" />
+              <button class="btn primary sm" :disabled="applying || !dirty" @click="apply()">
+                {{ applying ? '应用中…' : '应用' }}
+              </button>
+            </div>
+            <textarea v-model="text" class="json-edit" spellcheck="false" autocomplete="off" />
+          </div>
+
+          <div v-if="applyMsg" class="act-row">
+            <span class="status" :class="applyKind">{{ applyMsg }}</span>
+          </div>
+
+          <p v-if="jsonSummary && chain.length > 1" class="chain-hint sjson-sum">{{ jsonSummary }}</p>
         </div>
       </section>
 

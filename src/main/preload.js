@@ -6,6 +6,8 @@ const { contextBridge, ipcRenderer } = require('electron')
  */
 contextBridge.exposeInMainWorld('hundun', {
   info: () => ipcRenderer.invoke('app:info'),
+  // 用系统浏览器打开外部链接（服务商后台的 key 页面）。只在主进程里放行 https。
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
 
   cfg: {
     get: () => ipcRenderer.invoke('cfg:get'),
@@ -14,6 +16,10 @@ contextBridge.exposeInMainWorld('hundun', {
     // 模型配置：预览（不写）／应用（要么整份成功要么整份失败）／从磁盘导入
     previewModel: (text) => ipcRenderer.invoke('cfg:modelPreview', text),
     applyModel: (payload) => ipcRenderer.invoke('cfg:modelApply', payload),
+    // 简单模式（D077）：选一家 + 选一个 + 填 key。落到磁盘上仍是同一份 JSON。
+    applySimple: (simple) => ipcRenderer.invoke('cfg:modelSimple', simple),
+    presets: () => ipcRenderer.invoke('cfg:modelPresets'),
+    setKey: (key) => ipcRenderer.invoke('cfg:setKey', key),
     pickModelFile: () => ipcRenderer.invoke('cfg:pickModelFile'),
     // 卡片上的排序／增删。只改对象不写盘，改完还要走 applyModel 才算数。
     editModel: (payload) => ipcRenderer.invoke('cfg:modelEdit', payload)

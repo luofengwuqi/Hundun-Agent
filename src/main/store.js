@@ -211,8 +211,56 @@ function publicConfig() {
     hasApiKey: Boolean(c.apiKey && c.apiKey.trim()),
     // 老配置（只有手填的三个字段）第一次打开设置页时，用它生成一份等价的 JSON 填进编辑器。
     // 只在内存里生成，不落盘 —— 他没点「应用」之前，配置一个字都不该变。
-    modelSeed: c.modelConfig ? null : models.seedFromLegacy(c)
+    modelSeed: c.modelConfig ? null : models.seedFromLegacy(c),
+    // 设置页默认走哪一栏：简单模式的那份 JSON 能认出来就是简单，认不出（或还没配）就是 JSON。
+    // 没配过的人一律从简单开始 —— 他要知道自己买的是哪家的 key，不知道什么是 provider。
+    modelSimple: c.modelConfig ? models.configToSimple(c.modelConfig) : { preset: 'deepseek', baseUrl: '', apiKey: String(c.apiKey || ''), model: String(c.model || '') }
   }
+}
+
+/**
+ * 简单模式的一份改动 → 一份完整的 JSON → 走 applyModelConfig 那条老路。
+ *
+ * 认不出目录（比如他手改过、或者地址变了）就从上一份能解析的配置起改：
+ * 那样至少选项和顺序还在，不会因为切一下模式就把备用链洗成 0。
+ */
+function applySimple(simple) {
+  const cur = read()
+  const next = models.simpleToConfig(simple, { config: cur.modelConfig })
+  return applyModelConfig(next)
+}
+
+/** 只换 key：连 JSON 都不用重生成（重新生成会把自定义服务商之外的东西冲掉） */
+function setApiKey(key) {
+  const cur = read()
+  const cfg = cur.modelConfig
+  if (!cfg) {
+    // 老配置：没有 JSON，只有一个手填的 key。改它就等于改老字段。
+    return write({ apiKey: String(key == null ? '' : key).trim() })
+  }
+  const ref = String(cfg.model || '').trim()
+  const pid = ref.split('/')[0]
+  const next = JSON.parse(JSON.stringify(cfg))
+  const p = next.provider && next.provider[pid]
+  if (!p) throw new Error('配置里的 provider 对不上，先去「直接写 JSON」看一眼')
+  p.options = { ...(p.options || {}) }
+  const v = String(key == null ? '' : key).trim()
+  if (v) p.options.apiKey = v
+  else delete p.options.apiKey
+  if (next['x-hundun'] && next['x-hundun'].simple) next['x-hundun'].simple.apiKey = v
+  return applyModelConfig(next)
+}
+
+function applyModelConfig(obj) {
+  const r = models.normalize(obj, modelOpts())
+  if (!r.ok) {
+    const err = new Error(r.errors.join('；'))
+    err.modelErrors = r.errors
+    err.modelWarnings = r.warnings
+    throw err
+  }
+  const next = write({ modelConfig: obj })
+  return { ok: true, warnings: r.warnings, selected: r.selected, cfg: publicConfig() }
 }
 
 /** 只解析不写，给设置页实时校验用。和写入共用同一套 opts —— 两处各算一次 baseDir 早晚会不一样。 */
@@ -246,6 +294,9 @@ module.exports = {
   write,
   publicConfig,
   previewModel,
+  applySimple,
+  applyModelConfig,
+  setApiKey,
   todayStr,
   isQuietToday,
   toggleQuiet,

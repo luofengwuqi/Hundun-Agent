@@ -107,14 +107,219 @@ function splitRef(ref) {
   return { providerId: s.slice(0, i), modelId: s.slice(i + 1) }
 }
 
+/* ============================================================
+   简单模式（D077）
+   ============================================================
+
+   为什么还要有简单模式：
+   一份 opencode 格式的 JSON 能说清「跟谁说话」的一切，但它要填 地址、provider id、
+   models 下的键、limit.context、引用里的斜杠。第一次用的人只知道自己买的是哪家的 key ——
+   他得先学会这套格式，才能说第一句话。那是把实现细节收成了入场费。
+
+   所以给一份**预置目录**：选一家，填 key，就完事。目录里的地址和模型名都是写死的常量，
+   不再是他手填的两个字符串 —— 这正是当初改用 JSON 要治的那个病（地址可能是网关、
+   模型名可能是别名，错了不报错，只是变笨）。
+
+   简单模式不是另一套配置，它是**同一份 JSON 的另一种写法**：
+   切换时会用 simpleToConfig 把 JSON 重新生成一遍，写完还是走 normalize 那一条路。
+   所以只有一份源、一套校验、一条备用链 —— 不存在「两种模式互相不认识」。
+*/
+
+/**
+ * 没有 GET /models 的服务商。有的家（Anthropic、Gemini）协议就不是 OpenAI 兼容的，
+ * 本应用只会说一种协议，所以列进去也只会 404 —— 那不是「支持得不好」，是根本不通。
+ * 目录里只放真能用 OpenAI 兼容接口的；其它一律走「自定义」。
+ */
+const PRESETS = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    keyUrl: 'https://platform.deepseek.com/api_keys',
+    models: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat', context: 128000 },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', context: 128000 }
+    ]
+  },
+  {
+    id: 'moonshot',
+    name: 'Kimi（月之暗面）',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    keyUrl: 'https://platform.moonshot.cn/console/api-keys',
+    models: [
+      { id: 'kimi-k2-0905-preview', name: 'Kimi K2', context: 256000 },
+      { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', context: 256000 }
+    ]
+  },
+  {
+    id: 'zhipu',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    keyUrl: 'https://bigmodel.cn/usercenter/apikeys',
+    models: [
+      { id: 'glm-4.6', name: 'GLM-4.6', context: 200000 },
+      { id: 'glm-4.5-air', name: 'GLM-4.5 Air', context: 128000 }
+    ]
+  },
+  {
+    id: 'qwen',
+    name: '通义千问（阿里云百炼）',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    keyUrl: 'https://bailian.console.aliyun.com/?tab=model#/api-key',
+    models: [
+      { id: 'qwen-plus', name: 'Qwen Plus', context: 131072 },
+      { id: 'qwen-max', name: 'Qwen Max', context: 32768 },
+      { id: 'qwen-turbo', name: 'Qwen Turbo', context: 131072 }
+    ]
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    keyUrl: 'https://cloud.siliconflow.cn/account/ak',
+    models: [
+      { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3（硅基）', context: 131072 },
+      { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507', name: 'Qwen3 235B（硅基）', context: 131072 }
+    ]
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    keyUrl: 'https://openrouter.ai/keys',
+    models: [
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', context: 128000 },
+      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', context: 200000 }
+    ]
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama（本机）',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    noKey: true,
+    models: [{ id: 'qwen3:8b', name: 'Qwen3 8B', context: 32000 }]
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    baseUrl: '',
+    custom: true,
+    models: []
+  }
+]
+
+/** 只给界面看的目录副本。apiKey 不在里面 —— 那是他自己填的，不是目录带的。 */
+function presets() {
+  return PRESETS.map((p) => ({
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl,
+    keyUrl: p.keyUrl || '',
+    noKey: Boolean(p.noKey),
+    custom: Boolean(p.custom),
+    models: p.models.map((m) => ({ ...m }))
+  }))
+}
+
+/**
+ * 简单模式那几项 → 一份 opencode JSON。
+ *
+ * @param {{preset?:string, baseUrl?:string, apiKey?:string, model?:string}} simple
+ * @param {{config?:object}} opts config 是「切换前那份」，用来把自定义服务商的模型带过来
+ *
+ * 几个刻意的取舍：
+ * - 目录里的地址是常量，**不接受他自己改**：能改的话就成了「手填地址」的老问题。
+ *   要改地址，去自定义那一档，或者切到「直接写 JSON」。
+ * - key 里带 {env:} / {file:} 就原样写进去，不展开 —— 展开再落盘等于把 key 又抄成明文。
+ * - 只保留这一个 provider。留着别的家的 provider，目录里就查不到它的 key 该填在哪。
+ */
+function simpleToConfig(simple, opts = {}) {
+  const s = simple && typeof simple === 'object' ? simple : {}
+  const prev = opts.config && typeof opts.config === 'object' ? opts.config : {}
+  const preset = String(s.preset || '').trim()
+
+  const def = PRESETS.find((p) => p.id === preset)
+  if (!def) {
+    return { provider: {}, 'x-hundun': { simple: { ...s, preset: preset || 'deepseek' } } }
+  }
+
+  const custom = def.custom
+  const baseUrl = custom ? String(s.baseUrl || '').trim() : def.baseUrl
+  const apiKey = String(s.apiKey == null ? '' : s.apiKey).trim()
+
+  // 模型名。目录以外的名字也允许手填：目录不可能穷举人家新发的模型，
+  // 而「目录更新不及时」不该表现成「用不了」，只该表现成「这里没有，你自己填」。
+  const catalog = def.models.map((m) => m.id)
+  const picked = String(s.model || '').trim()
+  const modelId = picked || catalog[0] || ''
+
+  const conf = { name: def.name }
+  conf.npm = OPENAI_COMPATIBLE
+  conf.options = { baseURL: baseUrl }
+  if (apiKey) conf.options.apiKey = apiKey
+
+  const models = {}
+  for (const m of def.models) models[m.id] = { name: m.name, limit: { context: m.context } }
+  if (modelId && !models[modelId]) {
+    // 他手填的模型名：上下文未知，不写 limit —— 写了就是编一个数出来。
+    models[modelId] = { name: modelId }
+  }
+  // 自定义服务商从上一份配置里带过来的模型：他自己写过的名字，别在切换时弄丢。
+  if (custom && prev.provider && prev.provider[def.id] && prev.provider[def.id].models) {
+    for (const [mid, mconf] of Object.entries(prev.provider[def.id].models)) {
+      if (!models[mid]) models[mid] = JSON.parse(JSON.stringify(mconf || {}))
+    }
+  }
+
+  const out = { provider: { [def.id]: { ...conf, models } } }
+  if (modelId) out.model = def.id + '/' + modelId
+  out['x-hundun'] = {
+    simple: { preset: def.id, baseUrl: custom ? baseUrl : '', apiKey, model: modelId }
+  }
+  return out
+}
+
+/**
+ * 反过来：从一份 JSON 认出现在是简单模式的哪几家。
+ *
+ * 只有「目录里的 provider、目录里写的地址、只有一个 model 引用」时才认成简单模式；
+ * 认不出就返回 null，界面退回 JSON —— 与其猜错、把他手写的备用链丢掉，不如不认。
+ */
+function configToSimple(json) {
+  const ext = json && json['x-hundun'] && typeof json['x-hundun'] === 'object' ? json['x-hundun'] : {}
+  const s = ext.simple && typeof ext.simple === 'object' ? ext.simple : null
+  if (!s) return null
+  const def = PRESETS.find((p) => p.id === String(s.preset || ''))
+  if (!def) return null
+  const sel = (() => {
+    const nodes = (json && json.model) || ''
+    const r = splitRef(nodes)
+    if (!r) return ''
+    return r.providerId === def.id ? r.modelId : ''
+  })()
+  return {
+    preset: def.id,
+    baseUrl: String(s.baseUrl || ''),
+    apiKey: String(s.apiKey || ''),
+    model: sel || String(s.model || ''),
+    models: def.custom
+      ? Object.keys((json.provider && json.provider[def.id] && json.provider[def.id].models) || {})
+      : def.models.map((m) => m.id)
+  }
+}
+
 /**
  * 解析并校验。**一次把所有问题都说出来**，不要修一个报一个。
- * @returns {{ok:boolean, errors:string[], warnings:string[], providers:Array, ref:string, selected:Object|null}}
+ * @returns {{ok:boolean, errors:string[], warnings:string[], providers:Array, ref:string, selected:Object|null, simple:boolean}}
  */
 function normalize(raw, opts = {}) {
   const errors = []
   const warnings = []
   const baseDir = opts.baseDir || process.cwd()
+
+  // 简单模式：它只认这三样，其余字段（尤其是 x-hundun.simple）原样带过 ——
+  // 少写一个字段就会把「用户选的是简单模式」这件事悄悄丢掉，下次打开又变成直接写 JSON。
+  const simple = Boolean(raw && typeof raw === 'object' && raw['x-hundun'] && raw['x-hundun'].simple)
 
   const src = substitute(raw, baseDir, warnings, '配置')
 
@@ -262,7 +467,7 @@ function normalize(raw, opts = {}) {
     else warnings.push(`顺序里的 "${ref}" 找不到对应模型，已跳过`)
   }
 
-  return { ok: errors.length === 0, errors, warnings, providers, ref: head, selected, chain }
+  return { ok: errors.length === 0, errors, warnings, providers, ref: head, selected, chain, simple }
 }
 
 /** 依次尝试的整条链。只有一个模型时就是它自己。 */
@@ -392,6 +597,10 @@ module.exports = {
   addModel,
   removeModel,
   seedFromLegacy,
+  simpleToConfig,
+  configToSimple,
+  presets,
+  PRESETS,
   splitRef,
   substitute,
   OPENAI_COMPATIBLE
