@@ -173,6 +173,16 @@ function persistNotes(notes, opts = {}) {
     }
   }
 
+  // 没合上的话（P-14）。同样单独走，坏一个不连累别人。
+  if (bucket.open.length) {
+    try {
+      const r = life.ingestOpens(bucket.open)
+      if (r.length) written.push('OPEN.md（' + r.join('；') + '）')
+    } catch (e) {
+      written.push('未闭合写入失败: ' + e.message)
+    }
+  }
+
   if (written.length) search.rebuild().catch(() => {})
   return written
 }

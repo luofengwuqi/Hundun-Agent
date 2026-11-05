@@ -1498,6 +1498,143 @@ console.log('\n[3k] 记忆折叠：攒够几天才折，失败不推进')
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
+console.log('\n[3l] 没合上的话：只有一天窗口，问完即消失')
+
+{
+  const sched = require(path.join(ROOT, 'src/main/schedule.js'))
+  const { parseBlocks, groupNotes } = require(path.join(ROOT, 'src/main/blocks.js'))
+
+  // --- 块协议：它不能混进日记 ---
+  // 混进去的后果很具体：那句话被写成一行日记，而日记只写不读（D028），
+  // 于是第二天没人问起 —— 不报错、不崩，只是从此不再提这件事。
+  const pb = parseBlocks('好的，那就先这样<open>\n- 话题 | 方案他说再想想\n</open>')
+  ok(groupNotes(pb.notes).open.length === 1, '<open> 进了自己的桶，没混进日记')
+  ok(pb.clean === '好的，那就先这样', '<open> 不会漏到界面上')
+
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const dir = path.join(TMP, 'open-p14')
+  fs.rmSync(dir, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = dir
+  life.ensureLife()
+
+  const openFile = path.join(life.lifeDir(), 'OPEN.md')
+  ok(fs.existsSync(openFile), 'OPEN.md 和别的种子文件一起种出来')
+  ok(fs.readFileSync(openFile, 'utf8').includes('## 没合上的'), '模板里有表，他手改也看得懂')
+
+  // --- 写入的三条判据 ---
+  life.ingestOpens(['话题 | 方案他说再想想'])
+  const rows = life.listOpens()
+  ok(rows.length === 1 && rows[0].kind === '话题', '话题落盘')
+  ok(/^\d{4}-\d{2}-\d{2}$/.test(rows[0].date), '记的时候带上当天日期（窗口靠它算）')
+
+  life.ingestOpens(['话题 | 方案他说再想想'])
+  ok(life.listOpens().length === 1, '同一件事说两遍只记一条 —— 否则第二天会连着问两次')
+
+  life.ingestOpens(['瞎写 | 随便'])
+  ok(life.listOpens().length === 1, '类型认不出来就丢：猜成话题会把它当成轻松的事去问')
+
+  life.ingestOpens(['状态 | 他说最近睡不着'])
+  const withState = life.listOpens()
+  ok(withState.length === 2 && withState.some((o) => o.kind === '状态'), '状态单独一条')
+
+  // 表格写坏了没有：markdown 表格中间多一个空行就断开，他打开看到的是三行散字
+  const body = fs.readFileSync(openFile, 'utf8')
+  ok(/\| --- \| --- \| --- \|\n\| /.test(body), '写入时不会在分隔行和数据行之间留空行（表格不断开）')
+
+  // --- 窗口：只接昨天 ---
+  fs.rmSync(dir, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = dir
+  life.ensureLife()
+  life.addOpen({ kind: '状态', what: '他说最近睡不着', date: '2026-11-04' })
+  life.addOpen({ kind: '话题', what: '方案他说再想想', date: '2026-11-04' })
+  life.addOpen({ kind: '话题', what: '今天刚说的', date: '2026-11-05' })
+  life.addOpen({ kind: '状态', what: '三天前的', date: '2026-11-03' })
+
+  const NOW = new Date('2026-11-05T10:00:00')
+  const CFG = {
+    disturb: { on: true, windows: [{ from: '08:00', to: '23:00' }], dailyLimit: 2 },
+    quietDate: ''
+  }
+  const judgeNow = (extra = {}) =>
+    sched.judge({
+      now: NOW,
+      cfg: CFG,
+      items: life.listCommitments(),
+      opens: life.listOpens(),
+      sentToday: 0,
+      ...extra
+    })
+
+  const d1 = judgeNow()
+  ok(d1.fire && d1.source === 'open', '昨天没合上的话，今天成为候选')
+  ok(d1.kind === 'state', '一天只问一件时先问人（状态），后问事（话题）')
+
+  const dropOne = (kind, date) => {
+    // 每次删完行号都会前移，所以要重新读一次
+    const o = life.listOpens().find((x) => x.kind === kind && x.date === date)
+    if (o) life.removeOpenAt(o.line)
+  }
+  dropOne('状态', '2026-11-04')
+  const d2 = judgeNow()
+  ok(d2.kind === 'topic', '状态没了就问话题')
+
+  // --- 话题排在约定的前面 ---
+  life.addCommitment({ what: '交周报', due: '2026-11-05', pinned: true })
+  const d3 = judgeNow()
+  ok(d3.source === 'open', '昨天的话题排在今天到期的约定（哪怕 pinned）前面：它只有今天能问，约定明天还能问')
+
+  dropOne('话题', '2026-11-04')
+  const d4 = judgeNow()
+  ok(d4.fire && d4.source === 'commit', '没合上的话问完了，才轮到约定')
+
+  // --- 今天记的不选，前天的作废 ---
+  const d5 = sched.judge({ now: NOW, cfg: CFG, items: [], opens: life.listOpens() })
+  ok(!d5.fire, '只剩今天记的那些时，什么都不说 —— 它们是给明天留的')
+
+  ok(life.pruneOpens('2026-11-05') === 1, '过窗口的只清一条（前天那条）')
+  ok(!life.listOpens().some((o) => o.date === '2026-11-03'), '前天的不补问，直接作废')
+  ok(life.listOpens().some((o) => o.date === '2026-11-05'), '今天的留着，明天才轮到它')
+
+  // --- 措辞：两个最容易滑坡的地方 ---
+  const pt = sched.promptFor({ kind: 'topic', item: { what: '方案他说再想想' } })
+  ok(pt.includes('不要复述他说过的话'), '话题的指令要求不要复述 —— 复述就变成记账')
+  ok(pt.includes('不要说「昨天你说过」'), '话题明确禁止「昨天你说」这种开场')
+  ok(pt.includes('问完就停'), '话题只问一句')
+
+  const ps = sched.promptFor({ kind: 'state', item: { what: '他说最近睡不着' } })
+  ok(ps.includes('比昨天好点了吗'), '状态明确禁止让他给自己打分（F06-2 ③ 第 3 条）')
+  ok(ps.includes('不要给建议'), '状态明确禁止分析原因、给建议')
+  ok(ps.includes('就到这儿'), '他说「好多了」就闭合，不再追')
+
+  // --- 送到才算问过 ---
+  const dUnit = path.join(TMP, 'open-mark')
+  fs.rmSync(dUnit, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = dUnit
+  life.ensureLife()
+  life.addOpen({ kind: '状态', what: '他说最近睡不着', date: '2026-11-04' })
+  const pick = () => ({ source: 'open', kind: 'state', item: life.listOpens()[0] })
+
+  ok(sched.mark(pick(), false) === 'pending', '没送到什么都不标（当天后面几轮还能再试）')
+  ok(life.listOpens().length === 1, '没送到的那条留着')
+  ok(sched.mark(pick(), true) === 'delivered', '送到了')
+  ok(life.listOpens().length === 0, '送到就删 —— 「一条状态只问一次」全靠这个')
+
+  // 行被他删掉时：不能照着旧行号删 —— 那会吃掉他刚写的那句话
+  ok(
+    sched.mark({ source: 'open', kind: 'topic', item: { line: 999, what: '根本不存在的话' } }, true) ===
+      'skipped',
+    '行对不上就跳过，不误删别的行'
+  )
+  life.addOpen({ kind: '话题', what: '这句话还在', date: '2026-11-04' })
+  const shifted = life.listOpens()[0]
+  ok(
+    life.removeOpenAt(shifted.line + 5, shifted.what) === true,
+    '行号错位时按内容兜底找到它（他会手动改这个文件）'
+  )
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
 console.log('\n[4] 界面：SSR 渲染')
 
 const vuePlugin = {

@@ -258,10 +258,13 @@ const REASONS = {
  * 顺手返回 drop：**过时且时效强**的那些要删行，不是结案。
  * 「已结案」的意思是「问过了，他不回」，而这些是「根本没问、也不该问了」——
  * 写成一个词，两件事就再也分不开（D061 的教训）。
+ *
+ * @param {object[]} opens life.listOpens() 的结果（没合上的话，P-14）
  */
-function choose({ today, items = [] }) {
+function choose({ today, items = [], opens = [] }) {
   const drop = []
   const cands = []
+  const yesterday = addDays(today, -1)
 
   for (const it of items) {
     if (!it || !it.what) continue
@@ -271,7 +274,7 @@ function choose({ today, items = [] }) {
 
     if (it.delivery === '待延后') {
       // 待延后只给一次，且它当初能被标成待延后，就说明时效判过是弱的
-      cands.push({ item: it, kind: 'deferred', due: d })
+      cands.push({ source: 'commit', item: it, kind: 'deferred', due: d })
       continue
     }
 
@@ -283,13 +286,30 @@ function choose({ today, items = [] }) {
       continue
     }
 
-    cands.push({ item: it, kind: d < today ? 'late' : 'due', due: d })
+    cands.push({ source: 'commit', item: it, kind: d < today ? 'late' : 'due', due: d })
+  }
+
+  // 没合上的话（F06-2 ②③）：只有「昨天」这一天的窗口。
+  // 今天的还没到回访的时候（明天才问），更早的已经过了（隔三天再问是记账不是关心）。
+  // 后者由 pruneOpens 清掉，这里只是不选它。
+  for (const op of opens) {
+    if (!op || !op.what) continue
+    if (op.date !== yesterday) continue
+    cands.push({ source: 'open', item: op, kind: op.kind === '状态' ? 'state' : 'topic', due: yesterday })
   }
 
   if (!cands.length) return { fire: false, reason: 'nothing', drop }
 
   cands.sort((a, b) => {
-    // pinned 先：他亲口说过「到那天一定要问我」（D053／X-11）
+    // 话题／状态排最前：它们只有今天这一次机会，明天就作废了。
+    // 约定排在后面不是不重要，是**还能等** —— 晚一天问仍然成立，而昨天那句「顶不住」
+    // 拖到后天再问，就已经变成记账了（F06-2 末条）。
+    // 状态又排在话题前面：一天只能问一件事时，先问人，后问事。
+    const rank = (c) => (c.kind === 'state' ? 0 : c.kind === 'topic' ? 1 : 2)
+    const ra = rank(a)
+    const rb = rank(b)
+    if (ra !== rb) return ra - rb
+    // pinned：他亲口说过「到那天一定要问我」（D053／X-11）
     const pa = a.item.pinned ? 0 : 1
     const pb = b.item.pinned ? 0 : 1
     if (pa !== pb) return pa - pb
@@ -297,7 +317,7 @@ function choose({ today, items = [] }) {
     return (a.item.index || 0) - (b.item.index || 0)
   })
 
-  return { fire: true, kind: cands[0].kind, item: cands[0].item, drop }
+  return { fire: true, kind: cands[0].kind, source: cands[0].source, item: cands[0].item, drop }
 }
 
 /**
@@ -306,10 +326,11 @@ function choose({ today, items = [] }) {
  * @param {Date} input.now
  * @param {object} input.cfg 整份配置（里面有 disturb 和 quietDate）
  * @param {object[]} input.items life.listCommitments() 的结果
+ * @param {object[]} input.opens life.listOpens() 的结果
  * @param {number} input.sentToday 今天已经送达几条
  * @returns {{fire:boolean, reason?:string, item?:object, kind?:string, drop:number[]}}
  */
-function judge({ now = new Date(), cfg = {}, items = [], sentToday = 0 } = {}) {
+function judge({ now = new Date(), cfg = {}, items = [], opens = [], sentToday = 0 } = {}) {
   const disturb = (cfg && cfg.disturb) || {}
 
   // 顺序不是随便排的：总开关和时段是最容易被他自己关掉的，先判它们，
@@ -327,7 +348,7 @@ function judge({ now = new Date(), cfg = {}, items = [], sentToday = 0 } = {}) {
 
   if (!inWindows(now, windows)) return { fire: false, reason: 'outside', drop: [] }
 
-  return choose({ today: todayOf(now), items })
+  return choose({ today: todayOf(now), items, opens })
 }
 
 /**
@@ -343,6 +364,21 @@ function promptFor(d) {
   const what = d && d.item ? d.item.what : ''
   const due = d && d.item ? d.item.due : ''
   if (!what) return ''
+
+  // 话题（F06-2 ②）：他昨天留了个尾没说定。
+  // 最要紧的是「不要说『昨天你说』」—— 一说就变成记账，
+  // 而他昨天那话本来就是随口一提，被翻出来念一遍会很怪。
+  if (d.kind === 'topic') {
+    return `（他昨天有件事没定下来：${what}。今天接着问一句，就一句。不要复述他说过的话，不要说「昨天你说过」「上次」「我一直记着」这类话 —— 像你自己也一直在想这事一样，直接问。问完就停，不要追问第二句。）`
+  }
+
+  // 状态（F06-2 ③）：他昨天说过自己不好受。
+  // 三条限定写在这里，因为模型最容易在这里滑成例行安慰：
+  // 不打分、不分析原因、不给建议。
+  if (d.kind === 'state') {
+    return `（他昨天说过自己不太好：${what}。今天问一句，就一句。不要问「比昨天好点了吗」「现在几分」，不要分析原因，不要给建议，不要说「加油」。问问现在怎么样就够了。他说「好多了」或者不想谈，就到这儿，别再问。）`
+  }
+
   if (d.kind === 'deferred') {
     return `（这件到期那天没送到他跟前，现在补上：${what}，原定 ${due}。按现在的时点把话重说一遍，不要照搬当时想好的那句；不要提「延期」「补发」「上次」。只说这一件事，一两句话，说完就停。）`
   }
@@ -387,6 +423,28 @@ function brief(text, n = 90) {
  */
 function mark(d, delivered) {
   const it = d.item
+
+  // 没合上的话（P-14）走另一条路：**只有一天寿命，所以没有「待延后」这个状态**。
+  //
+  // 送到 → 删行，问完即消失（「一条状态只问一次」，F06-2 ③）。
+  // 没送到 → 什么都不做，留着当天后面几轮还能再试一次；
+  //   到了明天 pruneOpens 自动作废 —— 「隔三天再问『你前几天说累』是记账，不是关心」。
+  //
+  // 这里不能借约定那套待延后：那套的前提是「这句话以后说仍然成立」，
+  // 而「你昨天说累」隔一天就不成立了。
+  if (d.source === 'open') {
+    try {
+      if (!delivered) return 'pending'
+      // 先删再记配额：删不掉，说明这一行在他手里已经不是原来那句话了。
+      // 那种情况下宁可不算送达、不占配额，也不能把别人的话删掉。
+      if (!life.removeOpenAt(it.line, it.what)) return 'skipped'
+      store.bumpDisturb(1)
+      return 'delivered'
+    } catch {
+      return 'skipped'
+    }
+  }
+
   try {
     if (delivered) {
       if (it.delivery === '未问') store.bumpDisturb(1)
@@ -503,7 +561,17 @@ function start(opts = {}) {
       return
     }
 
-    const d = judge({ now, cfg, items, sentToday: store.disturbSentToday() })
+    let opens = []
+    try {
+      // 先清过期的：只有「昨天」这一个窗口，更早的一律作废，不补问。
+      // 它在窗口里没被送到（他没开机、窗口没开），就当没这回事 —— 连一句「可惜」都不留。
+      life.pruneOpens(todayOf(now))
+      opens = life.listOpens()
+    } catch {
+      opens = []
+    }
+
+    const d = judge({ now, cfg, items, opens, sentToday: store.disturbSentToday() })
     if (d.drop && d.drop.length) dropRows(d.drop)
     if (!d.fire) return
 

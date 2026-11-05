@@ -166,6 +166,42 @@ const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
 `
 
 /**
+ * 没合上的话（F06-2 ②③／D048／Q026／P-14）。
+ *
+ * 和 COMMITMENTS.md 分开，是两个理由：
+ *
+ *   一、**寿命不同**。约定能等，晚几天问仍然成立；这里的东西只有一天寿命。
+ *       混进一张表里，清理逻辑就要按每一行判寿命，而「哪一行是谁」只能靠一列类型区分——
+ *       一旦有一行类型写错，它就会在错误的时间被问起，或者永远不被问起。
+ *
+ *   二、**判据不同**。约定要「有日期 + 有事」；这里正好相反：**没有日期**才算，
+ *       因为「有日期」就已经是约定了。两套判据放进一张表，必然有一边被写歪。
+ *
+ * 为什么不直接写进日记：日记只写不读（D028），写进去等于石沉大海。
+ */
+const TPL_OPEN = `# OPEN.md — 没合上的话
+
+> 它回访用的。**不是待办，也不是约定** —— 有日期的事在 COMMITMENTS.md。
+> 这里每一条只有一天寿命：次日问一句，问完就删；过了那天自动作废，不用你清理。
+
+## 会记在这里的
+
+- **话题**：他说「再想想」「看情况」「到时候再说」；你问了他没答；他给了两个选项没选。
+- **状态**：他说自己不好受 —— 累、顶不住、睡不着、烦 —— 然后没下文。
+
+## 不会记在这里的
+
+- 有日期的事。那是约定。
+- 说完了的事。**只记没有结论的。**
+- 更早的。**只接昨天** —— 隔了三天再问「你前几天说累」，那是记账，不是关心。
+
+## 没合上的
+
+| 日期 | 类型 | 什么事 |
+| --- | --- | --- |
+`
+
+/**
  * 第一次见他的仪式（照 openclaw 的 BOOTSTRAP.md 做法，D078）。
  *
  * 为什么是文件而不是代码：这套流程里几乎每个字都是文案 —— 问什么、怎么收尾、
@@ -226,6 +262,7 @@ const SEEDS = {
   'USER.md': TPL_USER,
   'MEMORY.md': TPL_MEMORY,
   'COMMITMENTS.md': TPL_COMMITMENTS,
+  'OPEN.md': TPL_OPEN,
   // 放最后：ensureLife 要读完 USER.md 才决定要不要种它
   'BOOTSTRAP.md': TPL_BOOTSTRAP
 }
@@ -886,6 +923,189 @@ function sameDeal(a, b) {
   return norm(a).length > 0 && norm(a) === norm(b)
 }
 
+/* ------------------------------------------------------------------ */
+/* OPEN.md：没合上的话（F06-2 ②③／P-14）                                */
+/* ------------------------------------------------------------------ */
+
+/** 只有两种。类型决定它第二天怎么被问起 —— 认错比不记更糟。 */
+const OPEN_KINDS = ['话题', '状态']
+
+function opensPath() {
+  return path.join(lifeDir(), 'OPEN.md')
+}
+
+function readOpenText() {
+  const p = opensPath()
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : TPL_OPEN
+}
+
+/**
+ * 模型给的型别词不一定严丝合缝。**认不出来就返回空**，让调用方丢掉这一条 ——
+ * 猜成「话题」的后果很具体：那会变成一句轻松的回访，
+ * 而他昨天说的其实是他撑不住了。
+ */
+function normOpenKind(v) {
+  const s = String(v == null ? '' : v).trim()
+  if (OPEN_KINDS.includes(s)) return s
+  if (/状态|情绪|心情|身体|不好受/.test(s)) return '状态'
+  if (/话题|事情|问题|悬空/.test(s)) return '话题'
+  return ''
+}
+
+function parseOpens(text) {
+  const lines = String(text == null ? '' : text).split('\n')
+  let headerIdx = -1
+  let endIdx = -1
+  const rows = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const cells = splitRow(lines[i])
+    if (!cells) {
+      if (headerIdx >= 0 && rows.length) break
+      continue
+    }
+    if (headerIdx < 0) {
+      const names = cells.map((c) => c.replace(/\s+/g, ''))
+      if (!names.includes('什么事')) continue
+      headerIdx = i
+      endIdx = i
+      continue
+    }
+    endIdx = i
+    if (isDivider(cells)) continue
+    const what = String(cells[2] || '').trim()
+    const kind = normOpenKind(cells[1])
+    if (!what || !kind) continue // 手改坏的行：跳过，不猜
+    rows.push({
+      index: rows.length,
+      line: i,
+      date: String(cells[0] || '').trim(),
+      kind,
+      what
+    })
+  }
+
+  return { lines, headerIdx, endIdx, rows }
+}
+
+/** 读全部。带 line：删除要按文件里的实际行号，不能按有效行序号（跳过坏行后会错位）。 */
+function listOpens() {
+  return parseOpens(readOpenText()).rows
+}
+
+/**
+ * 记一条。
+ * @returns {boolean} false = 已经有一条一样的，没重复写
+ */
+function addOpen(entry = {}) {
+  const what = cellText(entry.what)
+  const kind = normOpenKind(entry.kind)
+  if (!what) throw new Error('没合上的话得有一句具体的话。')
+  if (!kind) throw new Error('类型只能是：' + OPEN_KINDS.join('／'))
+
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || '').trim())
+    ? String(entry.date).trim()
+    : dateStr()
+
+  const parsed = parseOpens(readOpenText())
+
+  // 同一件事说了两遍就记两条，第二天会连着问两次 —— 那是复读，不是关心。
+  // 用模糊比较：他第二次说得不会一字不差。
+  // **不分类型**：同一句话不会既是话题又是状态，跨类型还是同一件事，
+  // 记两条的结果是同一天问两次同一句话。
+  if (parsed.rows.some((r) => alike(r.what, what) >= 0.75)) return false
+
+  let lines = parsed.lines.slice()
+  // 先去尾部空行：文件以换行结尾，split 之后最后一项是空串，
+  // 直接往后 push 会在分隔行和数据行之间留一个空行 —— markdown 表格就此断开，
+  // 他打开文件看到的是三行散字，而不是一张表。
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
+  if (parsed.headerIdx < 0) {
+    // 表被手改坏了：末尾补一张标准的，不覆盖他写的说明文字
+    lines.push('', '| 日期 | 类型 | 什么事 |', '| --- | --- | --- |')
+  }
+  lines.push('| ' + [date, kind, what].map(cellText).join(' | ') + ' |')
+  writeSafe('OPEN.md', lines.join('\n'))
+  return true
+}
+
+/**
+ * 删一条。问过了就走这条 —— 没有「已问」这个状态，问完即消失。
+ *
+ * **行号不能全信**：它是上一轮读出来的，这期间他完全可能手动改过这个文件
+ * （删一行、加一行），之后行号全部前移。照着旧行号删，删掉的是他刚写的那句话 ——
+ * 而他不会知道是自己被吃掉了一条，只会觉得「我说了它没记」。
+ * 所以带 `expectWhat`：位置对不上就按内容再认一次，认不出来就不删。
+ */
+function removeOpenAt(line, expectWhat) {
+  const parsed = parseOpens(readOpenText())
+  const n = Number(line)
+
+  let hit = null
+  if (Number.isInteger(n) && n >= 0 && n < parsed.lines.length) {
+    hit = parsed.rows.find((r) => r.line === n)
+  }
+  if (!hit && expectWhat != null) {
+    hit = parsed.rows.find((r) => sameDeal(r.what, expectWhat))
+  }
+  if (!hit) return false
+  // 位置指向的是另一句话（他改过文件）：按内容重新找过之后仍然对不上，就不动
+  if (expectWhat != null && !sameDeal(hit.what, expectWhat)) return false
+
+  parsed.lines.splice(hit.line, 1)
+  writeSafe('OPEN.md', parsed.lines.join('\n'))
+  return true
+}
+
+/**
+ * 清掉已经过了「次日」窗口的。
+ *
+ * 只留昨天和今天的：昨天的今天问，今天记的明天问。
+ * 再早的一律删掉，且**不补问** —— 隔了三天再问「你前几天说累」是记账，不是关心（F06-2 末条）。
+ * 这个删除是静默的：它连自己都没问到，不需要留个墓碑。
+ */
+function pruneOpens(today = dateStr()) {
+  const parsed = parseOpens(readOpenText())
+  if (!parsed.rows.length) return 0
+  const y = new Date(today + 'T00:00:00')
+  const yesterday = dateStr(new Date(y.getTime() - 86400000))
+
+  const doomed = parsed.rows.filter((r) => !r.date || r.date < yesterday)
+  if (!doomed.length) return 0
+
+  const kill = new Set(doomed.map((r) => r.line))
+  writeSafe(
+    'OPEN.md',
+    parsed.lines.filter((_, i) => !kill.has(i)).join('\n')
+  )
+  return doomed.length
+}
+
+/**
+ * 把 `<open>` 块里的行写进 `OPEN.md`。
+ * 格式 `类型 | 内容`，例如 `话题 | 方案他说再想想`。
+ */
+function ingestOpens(lines) {
+  const out = []
+  for (const raw of (lines || []).slice(0, 3)) {
+    const line = String(raw).replace(/^[-*]\s*/, '').trim()
+    if (!line) continue
+    const cells = line.split('|').map((s) => s.trim())
+    const kind = normOpenKind(cells[0])
+    const what = cells[1] || ''
+    if (!kind || !what) {
+      out.push('丢：' + line + '（类型或缺内容）')
+      continue
+    }
+    try {
+      out.push(addOpen({ kind, what }) ? '记：' + kind + '／' + what : '略：' + what + '（已经有了）')
+    } catch (e) {
+      out.push('失败：' + what + '（' + e.message + '）')
+    }
+  }
+  return out
+}
+
 /**
  * 把 `<commit>` 块里的行写进 `COMMITMENTS.md`（P-09／F06-1）。
  *
@@ -1104,14 +1324,15 @@ function buildSystemPrompt(opts = {}) {
       '- 一句话，事实或情绪或决定',
       '</memory>',
       '',
-      '四种块，按内容选一个，可以都不写：',
+      '五种块，按内容选一个，可以都不写：',
       '1. <memory> → 写进今天的日记。日常、当下的状态、零星的事。',
       '2. <longterm> → 写进 MEMORY.md。只放持久的事实，或有证据的判断（判断必须能指到某天）。',
       '3. <profile> → 写进 USER.md（他怎么被对待）。**写成要求，不写观察**，一行格式 `主题｜内容`。',
       '   「他喜欢简短」是观察 —— 读过就忘；「回答保持简短」是要求 —— 它会被照做。',
       '   事实写 `称呼｜叫他老吴`、`作息｜晚上十二点后别找我`；要求写 `回答长度｜别超过三句`。',
       '   同一个主题再说一次是他在改主意 —— **改那一条**，不会多出一条。',
-      '4. <commit> → 一条约定。**四种块里只有这一种会让软件以后主动去找他**，所以它最严。',
+      '4. <commit> → 一条约定。有日期的事，到这天才提。',
+      '5. <open> → 一句**没合上的话**。这是唯一「没有日期、隔天回访」的块。',
       '',
       '<commit> 一行一条，两格用竖线分开：',
       '<commit>',
@@ -1122,12 +1343,26 @@ function buildSystemPrompt(opts = {}) {
       '第二格写到期日：能确定就写 YYYY-MM-DD；拿不准就照他的原话写（「月底前」「下周三」），不要自己换算成某一天。',
       '同一个「什么事」再说一次且日期不同，是他在更正（「不是后天，是大后天」）——照样输出，会覆盖旧那条。',
       '',
+      '<open> 一行一条，两格用竖线分开，第一格只能是这两个词之一：',
+      '<open>',
+      '- 话题 | 方案他说再想想，没定',
+      '- 状态 | 他说最近睡不着',
+      '</open>',
+      '`话题`——他说「再想想」「看情况」「到时候再说」，或者你问了他没答，或者他摆了两个选项没选。',
+      '`状态`——他说自己不好受（累、顶不住、睡不着、烦），然后没有下文。',
+      '**第二天问一句，问完就消失，只有这一次。** 所以写进去的东西必须是你第二天真的还想接的。',
+      '',
       '铁律：',
       '- **上下文里已经有的，不要再记一遍。** 上面那些文件就在你眼前，里面的内容是记过的；',
       '  把读到的东西原样再输出一次，只会让同一句话在文件里堆成好几行，而且它以后会照着复读答你。',
       '- **约定必须两样都有：有具体时间指向，且有具体事。缺一个就不写。**',
       '  「我最近想多写点代码」不是约定（没有时间）；「后天再说吧」不是约定（没有事）。',
       '- **宁可漏，不要多记。** 多记一条的代价是以后某天它为一个不重要的事来问他一句——那比漏掉更糟。',
+      '- **`<open>` 比 `<commit>` 更容易写歪。判据是「这句话现在真的放下了吗」。**',
+      '  说完就过去的（「好的」「那就这样」「知道了」）不是没合上；只有他自己留了个尾才算：',
+      '  「再想想」「回头再说」「看情况」，或者你问了他没答。',
+      '  **多数日子应该是零条。** 每天都标一条，它就会每天来问一句——那是打卡，不是记得（F06-2 行 ④ 的死法）。',
+      '  「后天再说吧」不是约定（没有具体事）；如果那是他没说定的事，走 `<open>` 的话题，不写 `<commit>`。',
       '- **不要问「要不要记着」，不要在正文里提这件事。** 记下来是你的事，不是流程。',
       '- 没有值得记的就不要输出任何块。空着比凑数好。',
       '- 只记他真实说过的事，一个字都不许自己编。',
@@ -1177,6 +1412,13 @@ module.exports = {
   removeCommitment,
   ingestCommits,
   sameDeal,
+  listOpens,
+  addOpen,
+  removeOpenAt,
+  pruneOpens,
+  ingestOpens,
+  opensPath,
+  OPEN_KINDS,
   OUTCOMES,
   DELIVERIES,
   buildSystemPrompt,
