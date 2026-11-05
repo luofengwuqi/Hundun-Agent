@@ -1950,3 +1950,31 @@ D078 把仪式搬进了 `BOOTSTRAP.md`，判据是「只在目录真正新建时
 **验证**：`scripts/test.mjs` 的 `[3m]`，含「老 SOUL 升级」「不数落他重复」「结论不能软」「他改过就不碰」「幂等」。
 
 ---
+### D084 提示词按 openclaw 的分层重排：人格归人格，合同归代码，仪式放最后
+
+- 内容：从 openclaw 搬三样——「语气层正面写温暖 + 给情绪时机」（Interaction Style）、「不许编／不许背档案／先接住情绪」（Care 段）、「仪式是命令，放提示词末尾」（Bootstrap Pending）。顺带把出厂模板改成逐版升级。
+- 状态：已定（2026-11-05）｜已落：`src/main/life.js`（`TPL_SOUL`、`buildSystemPrompt`、`migrateSoulTemplate`）
+- 确认人：用户｜确认方式：「提示词也可以把 openclaw 的拿过来用，然后基于项目情况改造」｜确认日期：2026-11-05
+- 来源：F08、D044、P-18｜关联：D078、D079、D083、`06-OPENCLAW-PORT.md`
+
+**拿过来的三样，都不是整段照抄**
+
+1. **Interaction Style**（`agents/gpt5-prompt-overlay.ts`）。它给的不是形容词，是可执行的细节：「Warm, collaborative, quietly supportive teammate」「Grounded emotion when fitting: care, curiosity, delight, relief, concern」「Never melodramatic / clingy / theatrical」「Wrong/risky: kind, direct」。这边落成「情绪要给对地方」三条：做成事高兴一下就够、卡住时先承认确实烦、报坏消息先说「这挺难受的」。
+2. **Care 段**（`agents/system-prompt.ts`）。它是**代码里的固定段**，不属于用户可改的人格文件，管的是「怎么对待这个人的隐私和事实」。这边落成「怎么对待他」六条：只说他真说过的、记忆是接得上不是展示、一次对话别提超过一次、让你别记就照做、情绪不好先别给方案、他的事不出这个文件夹。
+3. **Bootstrap Pending**。openclaw 把它写成 `## Bootstrap Pending` + "First visible reply must follow BOOTSTRAP.md; **no generic greeting**"，而不是把整份文件塞在中间。这边的仪式原来夹在「记忆规则」和「输出规则」之间，被后面几十行冲淡 —— 实测第一句就是「先问一个：你现在主要在做什么？」。现在移到**最后一段**，并加一句「这一轮的第一句就照上面来，不要用『有什么可以帮你』这类通用开场」。
+
+**为什么「怎么对待他」不进 SOUL.md**
+
+SOUL 是他能改的文件。他改语气是合理的，但他不该能改掉「不许编造关于他的事」。**语气可以下放，事实的边界不能下放。** 这和 D075 那条「判断可以外置，协议不能」是同一个道理。
+
+**出厂模板要能升级，但不能吃掉他的字**
+
+模板一改，已经装好的目录不会自动变——这是 D082 教过的「存量怎么办」。这次的判据是**逐字比对历史出厂版本**（`SOUL_V1`／`SOUL_V2`），只覆盖「一字不差等于某一版」的文件；他在正文里加一行却忘了记改写记录，靠这条挡住，不会被吃掉。不做模糊匹配：`includes` 之类的判据会把「他改写过的同主题版本」认成出厂版。
+
+**提示词长短的取舍**
+
+重排后第一次见面的提示词约 4.6k 字符（含 1.7k 的 BOOTSTRAP）。openclaw 的对应段更啰嗦，因为它要覆盖工具、频道、子代理；这边没有那些，能砍的全砍了。**搬的是判据，不是字数。**
+
+**验证**：`scripts/test.mjs` 的 `[3h]`（仪式在最后一段、Care 段在、输出规则禁止复述）与 `[3m]`（V1／V2 都能升、手改过不覆盖），全套 419 项。
+
+---

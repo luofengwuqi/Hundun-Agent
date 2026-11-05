@@ -28,6 +28,10 @@ hundunAgent 是 **Electron 单进程**：主进程就是全部后端，索引已
 | 注入文件有上限、截断处有提示 | `concepts/context.md` | `readSafe(rel, max)` | 更早 |
 | 注入内容的顺序固定（性格→身份→用户→长期→今日→检索） | 同上 | `buildSystemPrompt` | 更早 |
 | 记忆维护：日记定期折叠进长期记忆（只搬目的，不搬三阶段） | `concepts/dreaming.md` | `src/main/dream.js` + `startDream()` | D080 |
+| 人格分两层，语气层要正面写「温暖」并给情绪时机 | `agents/gpt5-prompt-overlay.ts`（`Interaction Style`）、`concepts/soul.md` | `TPL_SOUL` 的「外面这层／里面这层」 | D083／D084 |
+| 行为合同（不许编、不许背档案、情绪先接住）写进代码，不放用户可改的文件 | `agents/system-prompt.ts` 的 **Care** 段 | `buildSystemPrompt` 的「怎么对待他」 | D084 |
+| 「仪式是命令」：把 BOOTSTRAP 放在提示词**末尾**并加硬约束 | `system-prompt.ts` 的 `## Bootstrap Pending`（"no generic greeting"） | `buildSystemPrompt` 最后一段 | D084 |
+| 出厂模板逐版升级：只覆盖「逐字等于历史版本」的文件 | 无直接对应（它的模板不升级） | `migrateSoulTemplate` + `SOUL_HISTORY` | D083／D084 |
 
 ## 二、待搬
 

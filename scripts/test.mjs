@@ -1230,6 +1230,20 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsFirst.includes('BOOTSTRAP.md（第一次见他'), '第一轮提示词里带着仪式')
   ok(bsFirst.includes('这是仪式，不是关卡'), '带着「别挡在正事前面」这条')
   ok(bsFirst.includes('一次只问一个问题'), '带着「一次只问一个」')
+  ok(
+    bsFirst.indexOf('BOOTSTRAP.md（第一次见他') > bsFirst.indexOf('=== 输出规则 ==='),
+    '仪式排在输出规则之后（越靠后越像此刻的命令，原来夹在中间被冲淡）'
+  )
+  ok(
+    bsFirst.trim().endsWith('不要说「我在做初始化」。'),
+    '仪式是提示词的最后一段，后面不跟别的东西'
+  )
+  ok(bsFirst.includes('=== 怎么对待他 ==='), '有「怎么对待他」这一段（行为合同，不放在他改得动的 SOUL 里）')
+  ok(
+    bsFirst.includes('不许推断') && bsFirst.includes('那是查档案，不是聊天'),
+    '带着「不许编、不许背档案」两条'
+  )
+  ok(bsFirst.includes('不复述他刚说过的话'), '输出规则里禁止复述过场')
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
 
   life.ingestProfile(['叫他老吴'])
@@ -1830,13 +1844,9 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
   ok(!life.bootstrapPending(), '档案里已经有他 → 不补仪式（早就认识的人不必再走一遍）')
   ok(fs.existsSync(path.join(life.lifeDir(), '.bootstrap')), '但落一次标记，不用每轮重判')
 
-  // 老 SOUL → 新 SOUL：只动他没改过的那份
+  // 老 SOUL → 新 SOUL：只动他没改过的那份（逐字等于历史出厂版才升级）
   const soulPath = path.join(life.lifeDir(), 'SOUL.md')
-  fs.writeFileSync(
-    soulPath,
-    '# SOUL.md — 馄饨是谁\n\n## 你说话的方式\n- 不安慰过度。\n- 该顶的时候顶。\n\n## 改写记录\n（暂无）\n',
-    'utf8'
-  )
+  fs.writeFileSync(soulPath, life.SOUL_HISTORY[0], 'utf8')
   life.ensureLife()
   const soul = fs.readFileSync(soulPath, 'utf8')
   ok(soul.includes('外面这层'), '老 SOUL 升级成「温柔外壳 + 理性内核」')
@@ -1849,9 +1859,25 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
     '再跑一遍不会换第二次（幂等）'
   )
 
+  // 上一个中间版本也要能升上来
+  fs.writeFileSync(soulPath, life.SOUL_HISTORY[1], 'utf8')
+  life.ensureLife()
+  ok(
+    fs.readFileSync(soulPath, 'utf8').includes('情绪要给对地方'),
+    '中间版本（V2）也能升到当前版'
+  )
+
   fs.writeFileSync(soulPath, '# 我的 SOUL\n\n## 改写记录\n（我自己改过）\n', 'utf8')
   life.ensureLife()
   ok(!fs.readFileSync(soulPath, 'utf8').includes('外面这层'), '他改过 SOUL → 一个字都不碰')
+
+  // 他在正文里加了一句但没记改写记录：不是出厂样式，也不许覆盖
+  fs.writeFileSync(soulPath, life.SOUL_HISTORY[0] + '\n- 我加的一行\n', 'utf8')
+  life.ensureLife()
+  ok(
+    fs.readFileSync(soulPath, 'utf8').includes('我加的一行'),
+    '手改过但忘了记录 → 也不覆盖（不做模糊匹配）'
+  )
 
   process.env.HUNDUN_LIFE_DIR = prev
 }
