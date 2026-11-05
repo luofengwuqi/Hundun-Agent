@@ -455,6 +455,9 @@ function start(opts = {}) {
     try {
       const r = await sendTurn(promptFor(d), {
         internal: true,
+        // 这轮是它自己开口，不是他说话（照 openclaw 的 session-kind gating）。
+        // 带上来源，落盘那边才知道这轮里的东西一个字都不许记进记忆。
+        provenance: 'scheduler',
         onDelta: (t) => send('chat:delta', t)
       })
       if (r && r.dropped) return { delivery: 'skipped' } // 身份换了：这轮不算送达，也不算没说

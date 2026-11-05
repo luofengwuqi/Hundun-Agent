@@ -74,27 +74,36 @@ const TPL_IDENTITY = `# IDENTITY.md
 - 一句话：一个记得你说过什么、也会提醒你别骗自己的家伙
 `
 
+/**
+ * 用户档案（照 openclaw 的 user-model 契约，D079）。
+ *
+ * 关键区别是**每条写成要求，不是观察**：
+ *   「他喜欢简短」是观察 —— 模型读过就忘；
+ *   「回答保持简短」是要求 —— 它会被当成指令。
+ * 偏好被读进上下文几轮之后就失效，唯一有效的是把它写成可以直接执行的句子。
+ *
+ * 第二条是**覆盖而不是追加**：同一件事变了，改原来那条（旧条标 superseded），
+ * 不许并列两条相反的 active。追加式偏好历史会让模型从旧值回答 ——
+ * 这不是洁癖，是实测的失效模式。
+ */
 const TPL_USER = `# USER.md — 关于你
 
-> 这份档案还空着。第一次对话时馄饨会问你几个问题，把答案写在这里。
-> 你可以随时直接改这个文件，改完它就记住了。
+> 每条写成一个**要求**，不是一句观察。
+> 「他喜欢简短」是观察，「回答保持简短」才是要求 —— 只有要求会被照做。
+>
+> 改了主意就**改原来那条**：把它的 status 改成 superseded，在下面写一条新的 active。
+> 不要并列两条相反的 active，追加式偏好历史会让模型照着旧的那条答。
+> 每条上面那行记着什么时候观察到的、现在是死是活。
+>
+> 「关于他」放事实（怎么称呼、在做什么、作息），「要求」放他对你怎么说话的要求。
 
-## 你是谁
-（待访谈）
+## 关于他
 
-## 你在做什么
-（待访谈）
-
-## 你的作息
-（待访谈）
-
-## 你在意什么
-（待访谈）
-
-## 红线（不能碰的）
-（待访谈）
+## 要求
 
 ## 访谈实录
+
+（原话留档，只写不读。真正的档案在上面两节。）
 `
 
 const TPL_MEMORY = `# MEMORY.md — 长期记忆
@@ -221,6 +230,32 @@ const SEEDS = {
   'BOOTSTRAP.md': TPL_BOOTSTRAP
 }
 
+/**
+ * 老模板升到新模板（D079）。
+ *
+ * 只升级**还空着的**那一份：老模板五个小节全是「（待访谈）」，
+ * 里面没有任何他写的东西，换成新结构零风险。
+ *
+ * 已经有内容的不动 —— 把流水账翻译成「要求」是语言判断，代码做不好，
+ * 硬转只会把他写的话揉坏。那种情况让它和新的两节并存，能读、能继续写。
+ */
+function migrateUserTemplate() {
+  const p = path.join(lifeDir(), 'USER.md')
+  if (!fs.existsSync(p)) return false
+  const txt = fs.readFileSync(p, 'utf8')
+  if (txt.includes('## 关于他')) return false // 已经是新格式
+  const body = txt
+    .replace(/（待访谈）/g, '')
+    .replace(/^#.*$/gm, '')
+    .replace(/^>.*$/gm, '')
+    .replace(/^## .*$/gm, '')
+    .replace(/^（[^）]*）$/gm, '')
+    .trim()
+  if (body) return false // 有实质内容，别动
+  fs.writeFileSync(p, TPL_USER, 'utf8')
+  return true
+}
+
 function ensureLife() {
   // 仪式文件**只在目录真的是新建的那一刻**种一次，以后再不补。
   // 否则他手动删掉「别再问了」，下次启动又被种回来 —— 那等于这个开关是假的。
@@ -236,6 +271,8 @@ function ensureLife() {
     const p = path.join(lifeDir(), name)
     if (!fs.existsSync(p)) fs.writeFileSync(p, tpl, 'utf8')
   }
+  // 老版 USER.md 升级（只动还空着的那份）
+  migrateUserTemplate()
   ensureJournal(dateStr())
 }
 
@@ -302,8 +339,24 @@ function appendJournal(lines) {
 function appendLongterm(lines) {
   const p = path.join(lifeDir(), 'MEMORY.md')
   let txt = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : TPL_MEMORY
-  const stamp = dateStr().slice(5) // MM-DD
-  const block = lines.map((l) => '- ' + stamp + ' ' + String(l).replace(/^[-*]\s*/, '').trim()).join('\n')
+  const stamp = dateStr().slice(5)
+
+  // 召回防回环（照 openclaw）：MEMORY.md 每一轮都在上下文里，
+  // 模型很容易把**读到的东西**当成**新发现的东西**再输出一遍。
+  // 不拦的话，同一个事实每聊一次加一行，一个月后这份文件全是重复，
+  // 而且真话被埋在复读里 —— 它自己也会开始照着这些复读答。
+  const seen = new Set(
+    txt
+      .split('\n')
+      .map((l) => l.replace(/^-\s*[0-9]{2}-[0-9]{2}\s*/, '').trim())
+      .filter(Boolean)
+  )
+  const fresh = (lines || [])
+    .map((l) => String(l).replace(/^[-*]\s*/, '').trim())
+    .filter((l) => l && !seen.has(l))
+  if (!fresh.length) return 'MEMORY.md'
+
+  const block = fresh.map((l) => '- ' + stamp + ' ' + l).join('\n')
   const anchor = '## 进行中的事'
   if (txt.includes(anchor)) {
     txt = txt.replace(anchor, '### ' + dateStr() + '\n' + block + '\n\n' + anchor)
@@ -314,18 +367,165 @@ function appendLongterm(lines) {
   return 'MEMORY.md'
 }
 
-/** 用户档案：追加到 USER.md 的访谈实录 */
-function appendProfile(lines) {
+/* ------------------------------------------------------------------ */
+/* 用户档案的写入（D079）                                               */
+/* ------------------------------------------------------------------ */
+
+/** 这些主题是事实，进「关于他」；其余都当要求。 */
+const FACT_TOPIC = /^(称呼|名字|叫法|怎么叫|职业|工作|在做|做的事|行业|作息|睡眠|起床|城市|时区|住)/
+
+function sectionRange(txt, name) {
+  const re = new RegExp('^## ' + name + '\\s*$', 'm')
+  const m = re.exec(txt)
+  if (!m) return null
+  const start = m.index + m[0].length
+  const rest = txt.slice(start)
+  const next = rest.search(/^## /m)
+  return { start, end: next === -1 ? txt.length : start + next }
+}
+
+/**
+ * 把一节里的条目解析成 [{observed, status, key, body, from, to}]，位置用来原位替换。
+ *
+ * 只认**单行条目**（`<!-- 元数据 -->` 换行 `- 正文`）—— 写入就是这么写的，
+ * 解析也只认这一种。多行匹配会让正则一路吞到下一个 `## ` 标题，
+ * 吃掉后面的节，而且不报错（这个坑值得记一笔）。
+ */
+function parseEntries(txt, range) {
+  const seg = txt.slice(range.start, range.end)
+  const re = /<!--\s*observed:\s*([0-9-]+)\s*\|\s*status:\s*(\w+)\s*-->\n\s*-\s*([^\n]+)/g
+  const out = []
+  let m
+  while ((m = re.exec(seg))) {
+    const body = m[3].trim()
+    const key = (body.match(/^\[([^\]]+)\]/) || [])[1] || ''
+    out.push({
+      observed: m[1],
+      status: m[2].toLowerCase(),
+      key: key.trim(),
+      body: body.replace(/^\[[^\]]+\]\s*/, '').trim(),
+      from: range.start + m.index,
+      to: range.start + m.index + m[0].length
+    })
+  }
+  return out
+}
+
+/** 两句话的意思够不够近。用二元组的重合度，中文没有空格也能用。 */
+function alike(a, b) {
+  const norm = (s) => String(s).replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')
+  const A = norm(a)
+  const B = norm(b)
+  if (!A || !B) return 0
+  if (A === B) return 1
+  const grams = (s) => {
+    const set = new Set()
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2))
+    return set
+  }
+  const ga = grams(A)
+  const gb = grams(B)
+  let hit = 0
+  for (const g of ga) if (gb.has(g)) hit++
+  // 分母用**并集**，不是较小那个。用 min 的话，「别用 emoji」和
+  // 「别用emoji表情」会算出 1.0（短的那条正好是长条的前缀），
+  // 于是「表情」这个新信息被当成重复直接丢掉 —— 而且丢得悄无声息。
+  return hit / (ga.size + gb.size - hit)
+}
+
+/**
+ * 写用户档案（照 openclaw 的 user-model 契约，D079）。
+ *
+ * 和原来那段 `appendProfile` 的区别只有一条，但它是全部重点：**覆盖，不追加**。
+ *
+ * 原来是把每条 `<profile>` 追加到「访谈实录」下面，于是同一个偏好说三遍就是三条，
+ * 前后矛盾也不合并 —— 而且模型读到三条互相矛盾的记录时，会**挑旧的答**
+ * （PrefEval / ICLR 2025：偏好被读进上下文几轮后就开始失效，重复冲突条目让它继续失效）。
+ *
+ * 现在的规矩：
+ *   - 认得出主题（`主题｜内容` 或 `[主题] 内容`）就按主题覆盖；
+ *   - 认不出就按意思像不像覆盖（>0.75 才动，宁可多一条也不乱合并）；
+ *   - 被覆盖的旧条**不删**，改成 `status: superseded` 留在原地 —— 能看到他怎么变过来的；
+ *   - 一字不差的老条目直接跳过：**从上下文里读到的内容不许再记一遍**（召回防回环）。
+ *
+ * 事实（称呼、做什么、作息）进「关于他」，其余进「要求」。
+ *
+ * @returns {string[]} 每条怎么处理的，仅用于测试与日志，**不给他看**。
+ */
+function ingestProfile(lines) {
   const p = path.join(lifeDir(), 'USER.md')
   let txt = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : TPL_USER
-  const block = lines.map((l) => '- ' + String(l).replace(/^[-*]\s*/, '').trim()).join('\n')
-  if (txt.includes('## 访谈实录')) {
-    txt = txt.replace('## 访谈实录', '## 访谈实录\n\n### ' + dateStr() + '\n' + block)
-  } else {
-    txt = txt.trimEnd() + '\n\n## 访谈实录\n\n### ' + dateStr() + '\n' + block + '\n'
+  if (!sectionRange(txt, '关于他')) txt = txt.trimEnd() + '\n\n## 关于他\n'
+  if (!sectionRange(txt, '要求')) txt = txt.trimEnd() + '\n\n## 要求\n'
+
+  const out = []
+  const today = dateStr()
+
+  for (const raw of (lines || []).slice(0, 8)) {
+    let line = String(raw || '')
+      .replace(/^[-*]\s*/, '')
+      .trim()
+    if (!line) continue
+
+    // `主题｜内容`、`[主题] 内容` 都认；都没有就当纯要求
+    let key = ''
+    let body = line
+    const bar = line.split(/\s*[｜|]\s*/)
+    if (bar.length > 1 && bar[0].length <= 12) {
+      key = bar[0].trim()
+      body = bar.slice(1).join('｜').trim()
+    } else {
+      const br = line.match(/^\[([^\]]{1,12})\]\s*(.+)$/)
+      if (br) {
+        key = br[1].trim()
+        body = br[2].trim()
+      }
+    }
+    if (!body) continue
+
+    const section = FACT_TOPIC.test(key) ? '关于他' : '要求'
+    const range = sectionRange(txt, section)
+    const entries = parseEntries(txt, range)
+    const active = entries.filter((e) => e.status !== 'superseded')
+
+    // 1) 一字不差 —— 从上下文里读到的，别再记一遍。
+    // 这里必须用严格相等，不能用相似度：像「别用 emoji」和「别用emoji表情」
+    // 这种带着新细节的重述，被当成重复丢掉就永远补不回来了。
+    const dup = active.find((e) => sameDeal(e.body, body))
+    if (dup) {
+      out.push('跳过：' + body + '（已经记过了）')
+      continue
+    }
+
+    // 2) 同一主题，或意思够近 —— 旧的标 superseded，新的接在它后面
+    const twin = active.find((e) => (key && e.key && e.key === key) || alike(e.body, body) > 0.75)
+
+    const block =
+      '<!-- observed: ' + today + ' | status: active -->\n- ' + (key ? '[' + key + '] ' : '') + body
+
+    if (twin) {
+      // 旧条就地改成 superseded（只动状态词，正文一个字不动 —— 要能看到他怎么变过来的），
+      // 然后新的紧跟在它后面。
+      //
+      // 注意结尾位置必须用 twin.to，不能用 twin.from + flipped.length：
+      // superseded 比 active 长 4 个字符，按新长度算会往后多吃掉 4 个字，
+      // 而且吃掉的正是紧随其后的那段文字 —— 不报错，只是内容悄悄少了一截。
+      const seg = txt.slice(twin.from, twin.to)
+      const flipped = seg.replace(/status:\s*\w+/i, 'status: superseded')
+      txt = txt.slice(0, twin.from) + flipped + '\n\n' + block + txt.slice(twin.to)
+      out.push('改：' + twin.body + ' → ' + body)
+    } else {
+      const fresh = sectionRange(txt, section)
+      // 插在这一节的末尾，但要跳过尾部空白，否则每写一条就多攒一堆空行。
+      let insertAt = fresh.end
+      while (insertAt > fresh.start && /\s/.test(txt[insertAt - 1])) insertAt--
+      txt = txt.slice(0, insertAt) + '\n\n' + block + '\n\n' + txt.slice(insertAt)
+      out.push('记：' + body)
+    }
   }
-  fs.writeFileSync(p, txt, 'utf8')
-  return 'USER.md'
+
+  fs.writeFileSync(p, txt.replace(/\n{3,}/g, '\n\n'), 'utf8')
+  return out
 }
 
 /* ------------------------------------------------------------------ */
@@ -724,11 +924,15 @@ function ingestCommits(lines) {
 function isProfileEmpty() {
   const txt = readSafe('USER.md', 20000)
   if (!txt.trim()) return true
-  // 判据只有两条：没有按日期记过的访谈条目，且占位符还在。
-  // 用户手动把「（待访谈）」改成真内容，也算填过了。
-  const hasEntry = /###\s*\d{4}-\d{2}-\d{2}/.test(txt)
-  const hasPlaceholder = txt.includes('（待访谈）')
-  return !hasEntry && hasPlaceholder
+  // 新格式（D079）：有一条活着的条目就不空。这是唯一判据——
+  // 「问过几次」不算，「文件被改过」也不算，只有真记下了东西才算认识他。
+  if (/status:\s*active/i.test(txt)) return false
+  // 老格式兼容：早期版本把访谈记成 `### 2026-11-05` 下的条目。
+  if (/###\s*\d{4}-\d{2}-\d{2}/.test(txt)) return false
+  // 其余一律当空 —— 包括他自己写了点东西但没按格式来。
+  // 这个方向的错代价小：最坏是多问一遍（BOOTSTRAP.md 里还有「他已经写过就别问」兜着）；
+  // 反过来「以为认识他、从此不再问」则是永久错失。
+  return true
 }
 
 /* ------------------------------------------------------------------ */
@@ -756,14 +960,24 @@ function bootstrapPending() {
  * 不算他答过的内容 —— 拿它判完成的话，这个仪式永远不会结束。
  */
 function bootstrapDone() {
+  // 五件事问到了 = 档案里有五条**活着的话**。
+  // 不是「问过几次」——问过几次会因为换模型、重启、改文案而失真；
+  // 也不是「用户改过文件」——改模板注释也算改过。
   const txt = readSafe('USER.md', 20000)
+  let n = 0
+  for (const name of ['关于他', '要求']) {
+    const r = sectionRange(txt, name)
+    if (r) n += parseEntries(txt, r).filter((e) => e.status !== 'superseded').length
+  }
+  if (n >= 5) return true
+  // 老格式兼容：早期版本把五件事记在「访谈实录」下面，按日期分节。
   const at = txt.indexOf('## 访谈实录')
   if (at < 0) return false
-  const entries = txt
+  const old = txt
     .slice(at)
     .split('\n')
     .filter((l) => /^\s*-\s+\S/.test(l))
-  return entries.length >= 5
+  return old.length >= 5
 }
 
 /**
@@ -880,7 +1094,10 @@ function buildSystemPrompt(opts = {}) {
       '四种块，按内容选一个，可以都不写：',
       '1. <memory> → 写进今天的日记。日常、当下的状态、零星的事。',
       '2. <longterm> → 写进 MEMORY.md。只放持久的事实，或有证据的判断（判断必须能指到某天）。',
-      '3. <profile> → 写进 USER.md。关于他是谁、做什么、作息、在意什么、红线。',
+      '3. <profile> → 写进 USER.md（他怎么被对待）。**写成要求，不写观察**，一行格式 `主题｜内容`。',
+      '   「他喜欢简短」是观察 —— 读过就忘；「回答保持简短」是要求 —— 它会被照做。',
+      '   事实写 `称呼｜叫他老吴`、`作息｜晚上十二点后别找我`；要求写 `回答长度｜别超过三句`。',
+      '   同一个主题再说一次是他在改主意 —— **改那一条**，不会多出一条。',
       '4. <commit> → 一条约定。**四种块里只有这一种会让软件以后主动去找他**，所以它最严。',
       '',
       '<commit> 一行一条，两格用竖线分开：',
@@ -893,6 +1110,8 @@ function buildSystemPrompt(opts = {}) {
       '同一个「什么事」再说一次且日期不同，是他在更正（「不是后天，是大后天」）——照样输出，会覆盖旧那条。',
       '',
       '铁律：',
+      '- **上下文里已经有的，不要再记一遍。** 上面那些文件就在你眼前，里面的内容是记过的；',
+      '  把读到的东西原样再输出一次，只会让同一句话在文件里堆成好几行，而且它以后会照着复读答你。',
       '- **约定必须两样都有：有具体时间指向，且有具体事。缺一个就不写。**',
       '  「我最近想多写点代码」不是约定（没有时间）；「后天再说吧」不是约定（没有事）。',
       '- **宁可漏，不要多记。** 多记一条的代价是以后某天它为一个不重要的事来问他一句——那比漏掉更糟。',
@@ -932,7 +1151,8 @@ module.exports = {
   appendSafe,
   appendJournal,
   appendLongterm,
-  appendProfile,
+  ingestProfile,
+  alike,
   appendChat,
   chatPath,
   listChatDays,

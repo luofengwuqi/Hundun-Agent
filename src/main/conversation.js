@@ -128,15 +128,38 @@ function state() {
   return { history: history.map((m) => ({ role: m.role, content: m.content })), summary, busy }
 }
 
-function persistNotes(notes) {
+/**
+ * @param {Array} notes 从回复里抠出来的记忆块
+ * @param {object} opts { provenance }
+ */
+function persistNotes(notes, opts = {}) {
+  // 它自己开口那一轮，什么都不记（照 openclaw 的 session-kind gating）。
+  //
+  // 理由不是洁癖：那一轮里的话**全是它生成的**，他一个字都没说。
+  // 记进日记，明天它就会读到「我说过他最近在忙 X」——而 X 是它自己编的，
+  // 从此当成事实用下去。这种污染不报错、不崩，只是越陪越不对劲。
+  //
+  // 定时任务、压缩摘要这类「不是他说的」轮次都走这条。
+  if (opts.provenance && opts.provenance !== 'user') return []
+
   const bucket = groupNotes(notes)
   const written = []
   try {
     if (bucket.memory.length) written.push(life.appendJournal(bucket.memory))
     if (bucket.longterm.length) written.push(life.appendLongterm(bucket.longterm))
-    if (bucket.profile.length) written.push(life.appendProfile(bucket.profile))
   } catch (e) {
     written.push('写入失败: ' + e.message)
+  }
+
+  // 档案单独走：它是覆盖写，还可能一条都不落（重复的会被跳过），
+  // 所以返回值要逐条说清楚，不能只报一个文件名。
+  if (bucket.profile.length) {
+    try {
+      const r = life.ingestProfile(bucket.profile)
+      if (r.length) written.push('USER.md（' + r.join('；') + '）')
+    } catch (e) {
+      written.push('档案写入失败: ' + e.message)
+    }
   }
 
   // 约定单独走：它坏掉不能连累上面三个文件，反过来也一样。
@@ -287,7 +310,7 @@ async function send(text, hooks = {}) {
     // 少了它，上一个身份的话会写进现在的 MEMORY.md，而且永远发现不了。
     if (session.isStale(myEpoch)) return { dropped: true, text: '' }
 
-    const written = persistNotes(notes)
+    const written = persistNotes(notes, { provenance: hooks.provenance || 'user' })
     const finalText = clean || '（这一轮我只记了点东西，没别的话。）'
 
     // 它说的那句也落盘。上面那句兜底不算——原话的承诺里包含「没说就是没说」。

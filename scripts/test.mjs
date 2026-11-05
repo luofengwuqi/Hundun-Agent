@@ -56,7 +56,7 @@ const todayFile = path.join(LIFE, 'memory', life.dateStr() + '.md')
 ok(fs.existsSync(todayFile), '生成今天的日记文件')
 
 const userSeed = fs.readFileSync(path.join(LIFE, 'USER.md'), 'utf8')
-ok(userSeed.includes('待访谈'), 'USER.md 是空白档案（会触发访谈）')
+ok(userSeed.includes('## 关于他') && userSeed.includes('## 要求'), 'USER.md 是空白档案（事实／要求两节）')
 ok(life.isProfileEmpty(), '识别出档案为空')
 
 let prompt = life.buildSystemPrompt({})
@@ -361,10 +361,11 @@ const mem = fs.readFileSync(path.join(LIFE, 'MEMORY.md'), 'utf8')
 ok(mem.includes('连续三天周三下午效率低'), '长期记忆已落盘')
 ok(mem.indexOf('连续三天') < mem.indexOf('## 进行中的事'), '长期记忆插在锚点之前，结构没被破坏')
 
-life.appendProfile(['做后端，主要写 Java'])
+life.ingestProfile(['职业｜做后端，主要写 Java'])
 const usr = fs.readFileSync(path.join(LIFE, 'USER.md'), 'utf8')
 ok(usr.includes('做后端，主要写 Java'), '用户档案已落盘')
-ok(/## 访谈实录[\s\S]*### \d{4}-/.test(usr), '档案按日期分节记录')
+ok(/<!--\s*observed: \d{4}-\d{2}-\d{2} \| status: active -->/.test(usr), '条目带观察日期和存活状态')
+ok(/## 关于他[\s\S]*做后端/.test(usr), '事实类主题进了「关于他」')
 
 ok(!life.isProfileEmpty(), '档案写入后不再判定为空')
 
@@ -1231,10 +1232,10 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsFirst.includes('一次只问一个问题'), '带着「一次只问一个」')
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
 
-  life.appendProfile(['叫他老吴'])
+  life.ingestProfile(['叫他老吴'])
   ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
 
-  for (let bs = 2; bs <= 5; bs++) life.appendProfile(['第 ' + bs + ' 件事'])
+  for (let bs = 2; bs <= 5; bs++) life.ingestProfile(['第 ' + bs + ' 件事'])
   ok(life.bootstrapDone(), '五件事记满就算走完')
 
   const bsDone = life.buildSystemPrompt()
@@ -1258,6 +1259,114 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   )
 
   process.env.HUNDUN_LIFE_DIR = bsPrev
+}
+
+/* ---------------- 3j. 用户档案：写要求，覆盖不追加（D079） ---------------- */
+console.log('\n[3j] 用户档案：写要求，覆盖不追加')
+
+{
+  const profRoot = path.join(TMP, 'prof')
+  fs.rmSync(profRoot, { recursive: true, force: true })
+  const prev = process.env.HUNDUN_LIFE_DIR
+  process.env.HUNDUN_LIFE_DIR = profRoot
+  life.ensureLife()
+
+  const read = () => fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8')
+
+  ok(life.isProfileEmpty(), '新建的档案是空的')
+
+  life.ingestProfile(['称呼｜叫他老吴'])
+  ok(/## 关于他[\s\S]*叫他老吴/.test(read()), '事实（称呼）进「关于他」')
+  ok(read().includes('[称呼]'), '条目带着主题标记，下次好覆盖')
+  ok(!life.isProfileEmpty(), '记下一条就不再算空档案')
+
+  life.ingestProfile(['回答长度｜别超过三句'])
+  ok(/## 要求[\s\S]*别超过三句/.test(read()), '要求进「要求」那一节')
+  ok(/<!--\s*observed: \d{4}-\d{2}-\d{2} \| status: active -->/.test(read()), '带观察日期和活跃状态')
+
+  // 一字不差：从上下文里读到的内容不许再记一遍（召回防回环）
+  const dup = life.ingestProfile(['回答长度｜别超过三句'])
+  ok(/跳过/.test(dup[0]), '一字不差的直接跳过')
+  ok((read().match(/别超过三句/g) || []).length === 1, '文件里只有一份，没有复读')
+
+  // 同主题改主意：旧的标 superseded，新的接在后面，**不是并列两条 active**
+  const chg = life.ingestProfile(['回答长度｜可以长一点'])
+  ok(/改/.test(chg[0]), '同主题当作「他改主意了」')
+  const after = read()
+  ok(
+    /status: superseded[\s\S]*别超过三句[\s\S]*status: active[\s\S]*可以长一点/.test(after),
+    '旧的标 superseded、新的紧随其后 active'
+  )
+  ok((after.match(/status: active/g) || []).length === 2, '同一主题只剩一条 active')
+  ok(after.includes('别超过三句'), '旧条目没被删，看得见他是怎么变的')
+
+  // 带新细节的重述不能被当成重复丢掉。
+  // 这里踩过：相似度分母取「较小那条」，短句是长句前缀时恒等于 1，
+  // 于是「别用emoji表情」被当成「别用 emoji」的复读直接扔了。
+  life.ingestProfile(['别用 emoji'])
+  life.ingestProfile(['别用emoji表情'])
+  const em = read()
+  ok(em.includes('别用 emoji') && em.includes('别用emoji表情'), '加了细节的重述要留下，不能当重复丢掉')
+
+  // 长期记忆同样防回环
+  life.appendLongterm(['每天 22 点后进入状态'])
+  const memBefore = fs.readFileSync(path.join(life.lifeDir(), 'MEMORY.md'), 'utf8')
+  life.appendLongterm(['每天 22 点后进入状态'])
+  const memAfter = fs.readFileSync(path.join(life.lifeDir(), 'MEMORY.md'), 'utf8')
+  ok(memBefore === memAfter, 'MEMORY.md 同一句话不会写两遍')
+  ok((memAfter.match(/每天 22 点后进入状态/g) || []).length === 1, '长期记忆里也只留下一份')
+
+  // 它自己开口那一轮，一个字都不许记（session-kind gating）
+  const beforeChat = fs.existsSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'))
+    ? fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+    : ''
+  const schedWrite = conversation.persistNotes(
+    [{ target: 'memory', lines: ['我编的一句话，他根本没说过'] }],
+    { provenance: 'scheduler' }
+  )
+  const afterChat = fs.existsSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'))
+    ? fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+    : ''
+  ok(schedWrite.length === 0, '调度器发起的那轮不写任何记忆')
+  ok(!afterChat.includes('我编的一句话'), '日记里没有它自己编的内容')
+
+  const userWrite = conversation.persistNotes(
+    [{ target: 'memory', lines: ['他说今天很累'] }],
+    { provenance: 'user' }
+  )
+  ok(userWrite.length > 0, '他说的话照常记')
+  ok(
+    fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8').includes('他说今天很累'),
+    '这一条真的落进了日记'
+  )
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
+/* 老模板升级：只动还空着的那份 */
+{
+  const oldRoot = path.join(TMP, 'prof-old')
+  fs.rmSync(oldRoot, { recursive: true, force: true })
+  const prev = process.env.HUNDUN_LIFE_DIR
+  process.env.HUNDUN_LIFE_DIR = oldRoot
+  life.ensureLife()
+  const up = path.join(life.lifeDir(), 'USER.md')
+
+  fs.writeFileSync(
+    up,
+    '# USER.md — 关于你\n\n## 你是谁\n（待访谈）\n\n## 你的作息\n（待访谈）\n\n## 访谈实录\n',
+    'utf8'
+  )
+  life.ensureLife()
+  ok(fs.readFileSync(up, 'utf8').includes('## 关于他'), '空着的老档案自动升成新结构')
+
+  fs.writeFileSync(up, '# USER.md — 关于你\n\n## 你是谁\n老吴，做后端的\n\n## 访谈实录\n', 'utf8')
+  life.ensureLife()
+  const kept = fs.readFileSync(up, 'utf8')
+  ok(kept.includes('老吴，做后端的'), '已经写了东西的老档案原样保留')
+  ok(!kept.includes('## 关于他'), '有内容的不硬转，免得把他写的话揉坏')
+
+  process.env.HUNDUN_LIFE_DIR = prev
 }
 
 console.log('\n[4] 界面：SSR 渲染')
