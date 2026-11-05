@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('hundun', {
     reset: () => ipcRenderer.invoke('chat:reset'),
     send: (text) => ipcRenderer.invoke('chat:send', text),
     onDelta: (cb) => ipcRenderer.on('chat:delta', (_e, d) => cb(d)),
+    // 这一轮不是他点的发送：主进程到点自己开口（P-10）。
+    // 没有这个收尾，那个光标会一直闪，这句话永远停在「正在输入」。
+    onTurn: (cb) => ipcRenderer.on('chat:turn', (_e, d) => cb(d)),
     onDone: (cb) => ipcRenderer.on('chat:done', (_e, d) => cb(d)),
     onError: (cb) => ipcRenderer.on('chat:error', (_e, d) => cb(d)),
     onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, d) => cb(d)),

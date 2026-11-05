@@ -1024,6 +1024,193 @@ ok(store.publicConfig().hasApiKey === false, '清空 key 也算数，界面据�
 // 收尾：留一份能用的单模型配置
 store.write({ modelConfig: MODEL_OK })
 
+console.log('\n[3g] 调度：五条判定、时效、送达标记')
+
+const sched = require(path.join(ROOT, 'src/main/schedule.js'))
+
+// 到期日换算：绝对日期原样，相对表达按锚点算
+const ANCHOR = '2026-11-05' // 周四
+ok(sched.dueDate('2026-11-08', ANCHOR) === '2026-11-08', '绝对日期原样返回')
+ok(sched.dueDate('明天@' + ANCHOR, ANCHOR) === '2026-11-06', '明天 = 锚点 +1')
+ok(sched.dueDate('后天@' + ANCHOR, ANCHOR) === '2026-11-07', '后天 = 锚点 +2')
+ok(sched.dueDate('大后天@' + ANCHOR, ANCHOR) === '2026-11-08', '大后天 = 锚点 +3')
+ok(sched.dueDate('下周三@' + ANCHOR, ANCHOR) === '2026-11-11', '下周三 = 下一周的周三')
+ok(sched.dueDate('周三@' + ANCHOR, ANCHOR) === '2026-11-11', '光写「周三」= 还没到的那个周三')
+ok(sched.dueDate('周五@' + ANCHOR, ANCHOR) === '2026-11-06', '周五 = 明天')
+ok(sched.dueDate('月底@' + ANCHOR, ANCHOR) === '2026-11-30', '月底 = 这个月最后一天')
+ok(sched.dueDate('3天后@' + ANCHOR, ANCHOR) === '2026-11-08', '3 天后 = 锚点 +3')
+ok(sched.dueDate('改天@' + ANCHOR, ANCHOR) === null, '认不出来的日期不猜（返回 null）')
+
+// 时段：区间判断，不是等值比对
+const at = (h, m) => new Date(2026, 10, 5, h, m, 0)
+const WIN = [{ from: '09:00', to: '12:00' }]
+ok(sched.inWindows(at(10, 30), WIN) === true, '10:30 在 09:00–12:00 内')
+ok(sched.inWindows(at(12, 0), WIN) === false, '12:00 已经出界（右开）')
+ok(sched.inWindows(at(8, 59), WIN) === false, '8:59 还没到')
+ok(sched.inWindows(at(23, 30), [{ from: '23:00', to: '01:00' }]) === false, '跨零点的段不猜，直接作废')
+ok(sched.parseHm('930') === 570 && sched.parseHm('9:30') === 570, '时段写法两种都认')
+
+// 时效：默认强（少问一句是安全的方向）
+ok(sched.timeliness('跟客户谈项目细节') === 'strong', '「谈项目」是强时效')
+ok(sched.timeliness('把开源项目的 README 写了') === 'weak', '持续在写的事是弱时效')
+ok(sched.timeliness('随便什么') === 'strong', '认不出来按强时效（默认不问）')
+
+// 五条全部满足才开口
+const SC = {
+  disturb: { on: true, windows: WIN, dailyLimit: 3 },
+  quietDate: ''
+}
+const dueToday = { index: 0, what: '跟客户谈细节', due: '2026-11-05', delivery: '未问', pinned: false }
+const j1 = sched.judge({ now: at(10, 0), cfg: { ...SC, disturb: { ...SC.disturb, on: false } }, items: [dueToday] })
+ok(j1.fire === false && j1.reason === 'off', '总开关关着 → 不开口')
+const j2 = sched.judge({ now: at(10, 0), cfg: { ...SC, disturb: { ...SC.disturb, windows: [] } }, items: [dueToday] })
+ok(j2.fire === false && j2.reason === 'noWindow', '没有允许时段 → 不开口')
+const j3 = sched.judge({ now: at(10, 0), cfg: { ...SC, quietDate: '2026-11-05' }, items: [dueToday] })
+ok(j3.fire === false && j3.reason === 'quiet', '今天别烦我 → 不开口')
+const j4 = sched.judge({ now: at(10, 0), cfg: { ...SC, disturb: { ...SC.disturb, dailyLimit: 0 } }, items: [dueToday] })
+ok(j4.fire === false && j4.reason === 'noLimit', '上限 0 等同关闭')
+const j5 = sched.judge({ now: at(10, 0), cfg: SC, items: [dueToday], sentToday: 3 })
+ok(j5.fire === false && j5.reason === 'overLimit', '今天已经到上限 → 不开口')
+const j6 = sched.judge({ now: at(8, 0), cfg: SC, items: [dueToday] })
+ok(j6.fire === false && j6.reason === 'outside', '不在时段内 → 不开口')
+const j7 = sched.judge({ now: at(10, 0), cfg: SC, items: [] })
+ok(j7.fire === false && j7.reason === 'nothing', '没有到期的事 → 闭嘴')
+const j8 = sched.judge({ now: at(10, 0), cfg: SC, items: [dueToday] })
+ok(j8.fire === true && j8.kind === 'due', '到期当天 → 开口')
+const j9 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [{ index: 0, what: '跟客户谈细节', due: '2026-11-08', delivery: '未问' }]
+})
+ok(j9.fire === false, '还没到期 → 不开口')
+const j10 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [{ index: 0, what: '跟客户谈细节', due: '2026-11-05', delivery: '已送达' }]
+})
+ok(j10.fire === false, '已经送达过 → 再不提（X-10 红线 1）')
+const j11 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [{ index: 0, what: '把 README 写了', due: '2026-11-05', delivery: '待延后' }]
+})
+ok(j11.fire === true && j11.kind === 'deferred', '待延后 → 下次他在的时候再送')
+const j12 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [{ index: 0, what: '跟客户谈细节', due: '2026-11-03', delivery: '未问' }]
+})
+ok(j12.fire === false && j12.drop.includes(0), '过期且时效强 → 删行，不补问（F06-27）')
+const j13 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [{ index: 0, what: '把 README 写了', due: '2026-11-03', delivery: '未问' }]
+})
+ok(j13.fire === true && j13.kind === 'late', '过期但时效弱 → 允许问一次（F06-28）')
+const j14 = sched.judge({
+  now: at(10, 0), cfg: SC,
+  items: [
+    { index: 0, what: '跟客户谈细节', due: '2026-11-05', delivery: '未问', pinned: false },
+    { index: 1, what: '交稿', due: '2026-11-05', delivery: '未问', pinned: true }
+  ]
+})
+ok(j14.fire === true && j14.item.index === 1, 'pinned 排在前面（D053／X-11）')
+
+// 送达标记：状态机只走「消息」列（P-12）
+const CMT = path.join(life.lifeDir(), 'COMMITMENTS.md')
+function writeCommits(rows) {
+  const body = rows.map((r) => '| ' + r.join(' | ') + ' |').join('\n')
+  fs.writeFileSync(CMT, '\n| 什么事 | 到期日 | 结局 | 消息 |\n| --- | --- | --- | --- |\n' + body + '\n')
+}
+writeCommits([
+  ['把 README 写了', '2026-11-05', '—', '未问'],
+  ['跟客户谈细节', '2026-11-05', '—', '未问'],
+  ['练琴', '2026-11-05', '—', '待延后']
+])
+store.write({ disturbLog: { date: '', count: 0 } })
+const weakItem = life.listCommitments().find((c) => c.what === '把 README 写了')
+const strongItem = life.listCommitments().find((c) => c.what === '跟客户谈细节')
+const deferredItem = life.listCommitments().find((c) => c.what === '练琴')
+
+ok(sched.mark({ kind: 'due', item: weakItem }, false) === 'deferred', '没送到·时效弱 → 待延后')
+ok(life.readCommitment(weakItem.index).delivery === '待延后', '待延后真的写进文件了')
+ok(sched.mark({ kind: 'due', item: strongItem }, false) === 'dropped', '没送到·时效强 → 删行')
+ok(life.listCommitments().every((c) => c.what !== '跟客户谈细节'), '那条过时的真的没了')
+ok(sched.mark({ kind: 'deferred', item: deferredItem }, false) === 'dropped', '延后只给一次，第二次没送到就删')
+const readmeNow = life.listCommitments().find((c) => c.what === '把 README 写了')
+ok(sched.mark({ kind: 'deferred', item: readmeNow }, true) === 'delivered', '延后补送成功 → 已送达')
+ok(life.listCommitments().find((c) => c.what === '把 README 写了').delivery === '已送达', '已送达落盘')
+ok(store.disturbSentToday() === 0, '补送不额外占配额（F06-5 硬上限 3）')
+
+writeCommits([['跟客户谈细节', '2026-11-05', '—', '未问']])
+const firstItem = life.listCommitments()[0]
+ok(sched.mark({ kind: 'due', item: firstItem }, true) === 'delivered', '送达 → 已送达')
+ok(store.disturbSentToday() === 1, '第一次送达记一次配额')
+
+// ticker：判定之外的那半（窗口可见 / 通知 / 推事件）也要跑通
+writeCommits([['把 README 写了', '2026-11-05', '—', '未问']])
+store.write({
+  disturb: { on: true, windows: [{ from: '00:00', to: '23:59' }], dailyLimit: 5 },
+  quietDate: ''
+})
+const events = []
+let turnCalls = 0
+const s = sched.start({
+  getWindow: () => null, // 窗口不在 → 走通知那条路
+  isBusy: () => false,
+  send: (ch, payload) => events.push([ch, payload]),
+  sendTurn: async (text, hooks) => {
+    turnCalls++
+    hooks.onDelta('那个 README')
+    hooks.onDelta('后来写了吗')
+    return { text: '那个 README 后来写了吗' }
+  },
+  notify: async () => true,
+  intervalMs: 3600000,
+  gapMs: 0
+})
+s._reset()
+await s.tick()
+s.stop()
+ok(turnCalls === 1, '到点了就去生成一句话')
+ok(events.some((e) => e[0] === 'chat:delta') && events.some((e) => e[0] === 'chat:turn'), '推送了流式字和收尾事件')
+ok(life.listCommitments()[0].delivery === '已送达', '通知真的弹出来才算送达')
+
+// 窗口开着：不弹通知也算送到（判据是「他看得见」，不是「通知弹过」）
+writeCommits([['把 README 写了', '2026-11-05', '—', '未问']])
+let notified = 0
+const s2 = sched.start({
+  getWindow: () => ({ isDestroyed: () => false, isVisible: () => true }),
+  send: () => {},
+  sendTurn: async () => ({ text: '那个 README 写了吗' }),
+  notify: async () => {
+    notified++
+    return true
+  },
+  intervalMs: 3600000,
+  gapMs: 0
+})
+s2._reset()
+await s2.tick()
+s2.stop()
+ok(notified === 0 && life.listCommitments()[0].delivery === '已送达', '窗口开着 → 不弹通知也算送达')
+
+// 生成失败（没 key／网络不通）：不标记。那不是「没送到」，是这句话根本没说出来
+writeCommits([['把 README 写了', '2026-11-05', '—', '未问']])
+const ev2 = []
+const s3 = sched.start({
+  getWindow: () => null,
+  send: (ch) => ev2.push(ch),
+  sendTurn: async () => {
+    throw new Error('还没有填 API Key')
+  },
+  notify: async () => true,
+  intervalMs: 3600000,
+  gapMs: 0
+})
+s3._reset()
+await s3.tick()
+s3.stop()
+ok(
+  life.listCommitments()[0].delivery === '未问' && !ev2.includes('chat:turn'),
+  '生成失败不标记（否则下次会重说一遍，而他从没听过第一遍）'
+)
+
 console.log('\n[4] 界面：SSR 渲染')
 
 const vuePlugin = {

@@ -24,6 +24,10 @@ const DEFAULTS = {
   // 是默认态本身（D047）——填了才算他要。
   // 第四个参数「今天别烦我」是当天的作废，不是配置，仍在顶层 quietDate。
   disturb: { on: false, windows: [], dailyLimit: 0 },
+  // 今天已经送达几条（P-10）。这是**状态**不是配置：每天归零、不结转（F06-4）。
+  // 不放在 disturb 里，是因为 disturb 整块会被界面原样提交回来 ——
+  // 计数器一旦跟着走，保存一次设置就把今天的次数洗成他手里那份旧的。
+  disturbLog: { date: '', count: 0 },
   windowBounds: null,
   // 身份：登录做出来之前先给一个本地占位用户
   currentUser: 'local',
@@ -158,7 +162,10 @@ function read() {
     state = {
       ...DEFAULTS,
       ...parsed,
-      disturb: { ...DEFAULTS.disturb, ...(parsed.disturb || {}) }
+      disturb: { ...DEFAULTS.disturb, ...(parsed.disturb || {}) },
+      // 计数器同样整块合并：昨天那份原样留着的话，今天一读就变成「已经发过了」，
+      // 而它不会报错 —— 表现为「今天它一次都没找我」。
+      disturbLog: { ...DEFAULTS.disturbLog, ...(parsed.disturbLog || {}) }
     }
   } catch {
     state = JSON.parse(JSON.stringify(DEFAULTS))
@@ -284,6 +291,26 @@ function toggleQuiet() {
   return on
 }
 
+/**
+ * 今天已经送达几条（P-10）。
+ *
+ * **送达才算一次**，不是发出就算：按发出计数的话，关机那晚的三条会把配额吃掉，
+ * 而它们一句都没到他跟前（D057 同一个道理）。
+ * 待延后的补送不额外占配额（F06-5 硬上限 3）——所以这里只在「未问 → 已送达」时加。
+ */
+function disturbSentToday() {
+  const log = read().disturbLog || {}
+  return log.date === todayStr() ? Number(log.count) || 0 : 0
+}
+
+function bumpDisturb(by = 1) {
+  const today = todayStr()
+  const log = read().disturbLog || {}
+  const count = (log.date === today ? Number(log.count) || 0 : 0) + (Number(by) || 0)
+  write({ disturbLog: { date: today, count } })
+  return count
+}
+
 /** 丢掉内存缓存，下次 read 重新读盘。只给测试用（生产里没有「换配置」这件事）。 */
 function _reset() {
   cache = null
@@ -300,6 +327,8 @@ module.exports = {
   todayStr,
   isQuietToday,
   toggleQuiet,
+  disturbSentToday,
+  bumpDisturb,
   configFile: configPath,
   migrateConfig,
   DEFAULTS,

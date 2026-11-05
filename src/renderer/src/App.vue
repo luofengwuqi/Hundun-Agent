@@ -103,7 +103,17 @@ async function send(text) {
 
   try {
     const res = await window.hundun.chat.send(t)
-    if (res && res.error) {
+    if (res && res.skipped) {
+      // 它正在自己开口，这一句没发出去。**把话还给他**——
+      // 悄悄吞掉的话，他会以为自己发出去了，而对话里一个字都没有。
+      finalize('')
+      const last = messages.value[messages.value.length - 1]
+      if (last && last.role === 'user' && last.content === t) messages.value.pop()
+      input.value = t
+      nextTick(resize)
+      notice.value = '它正在说一句，等它说完再发'
+      noticeBad.value = false
+    } else if (res && res.error) {
       finalize('')
       notice.value = res.error
       noticeBad.value = true
@@ -272,6 +282,14 @@ onMounted(async () => {
   quiet.value = await window.hundun.quiet.get()
 
   offs.push(window.hundun.chat.onDelta(appendDelta))
+  // 它自己开口的那一轮（P-10）：没有这行收尾，光标会一直闪，
+  // 而且这句话永远停在「正在输入」——看起来像卡住了。
+  offs.push(
+    window.hundun.chat.onTurn((d) => {
+      finalize((d && d.text) || '')
+      scrollBottom()
+    })
+  )
   offs.push(
     window.hundun.chat.onDone((d) => {
       if (d && d.text) finalize(d.text)

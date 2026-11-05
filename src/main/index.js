@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, shell, dialog, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, Tray, Menu, shell, dialog, nativeImage, Notification } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -10,10 +10,12 @@ const llm = require('./llm')
 const search = require('./search')
 const identity = require('./identity')
 const session = require('./session')
+const schedule = require('./schedule')
 
 let mainWindow = null
 let tray = null
 let busy = false
+let scheduler = null
 
 const ROOT = path.join(__dirname, '..', '..')
 
@@ -177,7 +179,7 @@ function refreshTrayMenu() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 主动开口（M2 重建）                                                  */
+/* 主动开口（P-10 调度 / P-12 送达标记）                                 */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -185,12 +187,53 @@ function refreshTrayMenu() {
  * 那套东西已作废（D039／D047／O11）——它开口的原因是「时间到了」，
  * 而产品要的是「你有一句还没合上的话」。判据不同，代码不能复用。
  *
- * 整块（fireCheckpoint / tickScheduler / 20 秒轮询）已删除，留给 M2 的 P-10：
- * 60 秒一次，判五条——有到期约定／有待延后／在允许时段内／今日未超限／今天没被作废。
- *
- * 空着不等于忘了：**光留一套永远不触发的旧调度，比删掉更糟**，
- * 那种状态下它不报错、不崩，只是从此不再找你。
+ * 现在的调度在 schedule.js：60 秒一次，判五条，说一件。
  */
+
+/**
+ * 系统通知。返回的是「真的弹出来了吗」，不是「调过 show() 没有」。
+ *
+ * 送达判据要的是前者：没有通知守护进程的桌面（精简发行版、某些 WM）里
+ * show() 一声不响地什么也不做，把它算成送达，这条约定就永久结案了 ——
+ * 而 D057 只允许往「多问一句」的方向错。
+ */
+function notifySystem({ title, body }) {
+  return new Promise((resolve) => {
+    try {
+      if (!Notification.isSupported()) return resolve(false)
+      const n = new Notification({ title, body, icon: resolveIcon() || undefined })
+      let done = false
+      const finish = (v) => {
+        if (done) return
+        done = true
+        resolve(v)
+      }
+      n.on('show', () => finish(true))
+      n.on('failed', () => finish(false))
+      // 通知只提示，点开才进窗口（F06-3 第 3 步：不抢焦点）
+      n.on('click', () => showWindow())
+      n.show()
+      // 有些环境既不 show 也不 failed，就这么悬着。等两秒，当没送到。
+      setTimeout(() => finish(false), 2000)
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+function startScheduler() {
+  scheduler = schedule.start({
+    getWindow: () => mainWindow,
+    isBusy: () => busy,
+    // 往界面推事件。窗口不在也能推 —— 渲染进程活着，回来就能看见这句话
+    send: (channel, payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+    },
+    sendTurn: (text, hooks) => conversation.send(text, hooks),
+    notify: notifySystem,
+    log: (m) => console.log('[schedule] ' + m)
+  })
+}
 
 /* ------------------------------------------------------------------ */
 /* IPC                                                                 */
@@ -394,6 +437,9 @@ function registerIpc() {
 
   ipcMain.handle('chat:send', async (event, text) => {
     if (busy) return { skipped: true }
+    // 它正在自己开口（P-10）。两轮同时跑会共用一个 history，字会串成一段，
+    // 而且接缝看不出来 —— 宁可让他再按一次回车。
+    if (scheduler && scheduler.isBusy()) return { skipped: true, reason: '它正在说一句' }
     let internal = false
     let content = text
     if (text === '__opening__') {
@@ -472,6 +518,8 @@ if (!singleLock) {
     registerIpc()
     createWindow()
     buildTray()
+    // 截图模式只活几秒，调度器一起来就会多一句不该出现的对话
+    if (!process.env.HUNDUN_SHOT) startScheduler()
     search
       .info()
       .then((info) => console.log('[search] 索引就绪：' + (info.count || 0) + ' 条'))
@@ -486,5 +534,10 @@ if (!singleLock) {
     // 否则「它到了那天来问你」这件事根本不可能发生。
     // 调度器也不清：清掉的话进程还活着、却永远不开口——不报错、不崩，
     // 只表现为「它不再找我」。真退出只有一条路：托盘菜单里的「退出」。
+  })
+
+  app.on('before-quit', () => {
+    app.isQuitting = true
+    if (scheduler) scheduler.stop()
   })
 }
