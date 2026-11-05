@@ -3,9 +3,12 @@
  * 单独成文件是为了能脱离 Electron 直接跑测试。
  */
 
-const BLOCK_RE = /<(memory|longterm|profile)>([\s\S]*?)<\/\1>/gi
+const BLOCK_RE = /<(memory|longterm|profile|commit)>([\s\S]*?)<\/\1>/gi
 
-const VALID = new Set(['memory', 'longterm', 'profile'])
+// commit 是第四种块（F06-1／P-09）：它不进日记，进 COMMITMENTS.md。
+// 单独列出来是因为**它必须被看见**——一旦和 memory 混在一个桶里，
+// 那条约定了会被写成一行日记，然后永远不会有人问起（静默失效）。
+const VALID = new Set(['memory', 'longterm', 'profile', 'commit'])
 
 /**
  * 从模型回复里抠出记忆块。
@@ -29,9 +32,9 @@ function parseBlocks(text) {
   return { clean, notes }
 }
 
-/** 把零散的 notes 归并成 {memory:[], longterm:[], profile:[]} */
+/** 把零散的 notes 归并成 {memory:[], longterm:[], profile:[], commit:[]} */
 function groupNotes(notes) {
-  const bucket = { memory: [], longterm: [], profile: [] }
+  const bucket = { memory: [], longterm: [], profile: [], commit: [] }
   for (const n of notes) {
     if (bucket[n.target]) bucket[n.target].push(...n.lines)
   }

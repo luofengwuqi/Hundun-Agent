@@ -153,6 +153,7 @@ function ensureLife() {
   // 先把身份目录建好（必要时把老布局搬进来），再放种子文件
   ensureLayout()
   fs.mkdirSync(memoryDir(), { recursive: true })
+  fs.mkdirSync(path.join(lifeDir(), 'chat'), { recursive: true })
   for (const [name, tpl] of Object.entries(SEEDS)) {
     const p = path.join(lifeDir(), name)
     if (!fs.existsSync(p)) fs.writeFileSync(p, tpl, 'utf8')
@@ -247,6 +248,67 @@ function appendProfile(lines) {
   }
   fs.writeFileSync(p, txt, 'utf8')
   return 'USER.md'
+}
+
+/* ------------------------------------------------------------------ */
+/* 对话原话（P-07／D028）                                              */
+/* ------------------------------------------------------------------ */
+
+function chatPath(date) {
+  return path.join(lifeDir(), 'chat', date + '.md')
+}
+
+/**
+ * 原话落盘：`⟨身份⟩/chat/YYYY-MM-DD.md`，一行一句，`HH:MM [你|我] 正文`。
+ *
+ * **只写不读**（D028 写死）：这个目录永远不进上下文，它只用于回查和检索。
+ * 加这个限制不是为了省 token，是因为「原话」一旦能被模型读到，
+ * 摘要和原话就会在同一段上下文里打架，而它一定会更信那条更长的。
+ *
+ * 正文里的换行保留（续行缩进两格）：原话这个承诺里包含分行——
+ * 他当时是一行一句还是一整段，回查的时候看得出来。
+ */
+function appendChat(role, text) {
+  const body = String(text == null ? '' : text)
+    .replace(/\r\n/g, '\n')
+    .trim()
+  if (!body) return null
+
+  const today = dateStr()
+  const abs = chatPath(today)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  if (!fs.existsSync(abs)) {
+    const d = new Date(today + 'T12:00:00')
+    fs.writeFileSync(abs, '# 对话 · ' + today + ' ' + weekday(d) + '\n\n', 'utf8')
+  }
+
+  const who = role === 'user' ? '你' : '我'
+  const lines = body.split('\n')
+  const head = '- ' + timeStr() + ' [' + who + '] ' + lines[0].trimEnd()
+  // 续行缩进两格（markdown 里算同一段）。空行保持空——带两个空格的行
+  // 在编辑器里看不见，但会一直累积到文件的每一处。
+  const rest = lines
+    .slice(1)
+    .map((s) => {
+      const t = s.trimEnd()
+      return t ? '  ' + t : ''
+    })
+    .join('\n')
+  fs.appendFileSync(abs, head + (rest ? '\n' + rest : '') + '\n', 'utf8')
+  return 'chat/' + today + '.md'
+}
+
+function listChatDays() {
+  const dir = path.join(lifeDir(), 'chat')
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+      .map((f) => f.slice(0, 10))
+      .sort()
+  } catch {
+    return []
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -527,6 +589,56 @@ function removeCommitment(index) {
   return true
 }
 
+/** 两句话说的是不是同一件事（去掉空格和标点再比）。 */
+function sameDeal(a, b) {
+  const norm = (s) => String(s == null ? '' : s).replace(/[\s，。、！？：；,.!?:;"'「」『』（）()]/g, '')
+  return norm(a).length > 0 && norm(a) === norm(b)
+}
+
+/**
+ * 把 `<commit>` 块里的行写进 `COMMITMENTS.md`（P-09／F06-1）。
+ *
+ * 输入是模型给的原始行，格式 `什么事 | 到期日`。这里的职责只有三件：
+ *   1. **判据**——有日期且有具体事，缺一件就丢。丢弃是静默的，不报错也不说话（D049）。
+ *   2. **补锚点**——他说的多半是「下周三」「月底前」。不在这里猜成绝对日期，
+ *      存成 `下周三@2026-11-05`（相对表达 + 当天锚点），到调度时再换算（§1.6 第六条）。
+ *   3. **改而不是加**——同一个「什么事」还没结案时，第二次出现是他在更正
+ *      （「不是后天，是大后天」），改那一行的日期，不新增一条（F06-02）。
+ *      **已结案的不碰**：那件事已经说完了，他再提是另一件事，该新起一行。
+ *
+ * @returns {string[]} 每条的处理结果，仅用于测试与日志，**不显示给他看**。
+ */
+function ingestCommits(lines) {
+  const today = dateStr()
+  const out = []
+  for (const raw of (lines || []).slice(0, 5)) {
+    const line = String(raw).replace(/^[-*]\s*/, '').trim()
+    if (!line) continue
+    const cells = line.split('|').map((s) => s.trim())
+    const what = cells[0] || ''
+    let due = cells[1] || ''
+    if (!what || !due) {
+      out.push('丢：' + (what || due || line) + '（缺日期或缺事）')
+      continue
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(due) && !due.includes('@')) due = due + '@' + today
+
+    const twin = listCommitments().find((c) => c.delivery !== '已结案' && sameDeal(c.what, what))
+    try {
+      if (twin) {
+        updateCommitment(twin.index, { due }, { expectWhat: twin.what })
+        out.push('改：' + twin.what + ' → ' + due)
+      } else {
+        addCommitment({ what, due })
+        out.push('记：' + what + ' → ' + due)
+      }
+    } catch (e) {
+      out.push('失败：' + what + '（' + e.message + '）')
+    }
+  }
+  return out
+}
+
 /* ------------------------------------------------------------------ */
 /* 上下文拼装                                                          */
 /* ------------------------------------------------------------------ */
@@ -595,12 +707,26 @@ function buildSystemPrompt(opts = {}) {
       '- 一句话，事实或情绪或决定',
       '</memory>',
       '',
-      '三种块，按内容选一个，可以都不写：',
+      '四种块，按内容选一个，可以都不写：',
       '1. <memory> → 写进今天的日记。日常、当下的状态、零星的事。',
       '2. <longterm> → 写进 MEMORY.md。只放持久的事实，或有证据的判断（判断必须能指到某天）。',
       '3. <profile> → 写进 USER.md。关于他是谁、做什么、作息、在意什么、红线。',
+      '4. <commit> → 一条约定。**四种块里只有这一种会让软件以后主动去找他**，所以它最严。',
+      '',
+      '<commit> 一行一条，两格用竖线分开：',
+      '<commit>',
+      '- 跟客户谈细节 | 2026-11-07',
+      '- 去看牙 | 下周三',
+      '</commit>',
+      '第一格写那件事，要具体（「跟客户谈细节」，不写「那件事」）。',
+      '第二格写到期日：能确定就写 YYYY-MM-DD；拿不准就照他的原话写（「月底前」「下周三」），不要自己换算成某一天。',
+      '同一个「什么事」再说一次且日期不同，是他在更正（「不是后天，是大后天」）——照样输出，会覆盖旧那条。',
       '',
       '铁律：',
+      '- **约定必须两样都有：有具体时间指向，且有具体事。缺一个就不写。**',
+      '  「我最近想多写点代码」不是约定（没有时间）；「后天再说吧」不是约定（没有事）。',
+      '- **宁可漏，不要多记。** 多记一条的代价是以后某天它为一个不重要的事来问他一句——那比漏掉更糟。',
+      '- **不要问「要不要记着」，不要在正文里提这件事。** 记下来是你的事，不是流程。',
       '- 没有值得记的就不要输出任何块。空着比凑数好。',
       '- 只记他真实说过的事，一个字都不许自己编。',
       '- 每个块最多 3 条，每条不超过 40 字。',
@@ -643,11 +769,16 @@ module.exports = {
   appendJournal,
   appendLongterm,
   appendProfile,
+  appendChat,
+  chatPath,
+  listChatDays,
   listCommitments,
   readCommitment,
   addCommitment,
   updateCommitment,
   removeCommitment,
+  ingestCommits,
+  sameDeal,
   OUTCOMES,
   DELIVERIES,
   buildSystemPrompt,

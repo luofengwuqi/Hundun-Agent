@@ -7,6 +7,7 @@
 为什么用 Python 而不是 Node：本机 Node 的 HTTP 栈依赖 WASM，跑服务端会直接 OOM。
 它真的按 OpenAI 的 SSE 格式逐字吐，所以能验证流式、记忆块提取、落盘全链路。
 """
+import datetime
 import json
 import sys
 import time
@@ -23,6 +24,10 @@ FOLLOWUP = (
 )
 
 DEFAULT = "记下了。今天想先动哪一件？"
+
+# 约定通道的联调用例：他说的话里带「后天」，回一句并静默写一条约定。
+# 注意回复正文里**不提**这件事（D049）——提了就是 G06 里被否掉的那种「已记录」。
+COMMIT_REPLY = "好。那件事我到时会问你一句，现在不用管它。\n\n今天想先动这一件，还是先歇会儿？\n<commit>\n- 跟客户谈细节 | {due}\n</commit>"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -47,7 +52,10 @@ class Handler(BaseHTTPRequestHandler):
                 last = str(m.get("content") or "")
                 break
 
-        if "开始对话" in last or "检查点" in last:
+        if "后天" in last:
+            due = (datetime.date.today() + datetime.timedelta(days=2)).isoformat()
+            reply = COMMIT_REPLY.format(due=due)
+        elif "开始对话" in last or "检查点" in last:
             reply = OPENING
         elif user_turns <= 2:
             reply = FOLLOWUP

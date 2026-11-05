@@ -53,6 +53,18 @@ function persistNotes(notes) {
   } catch (e) {
     written.push('写入失败: ' + e.message)
   }
+
+  // 约定单独走：它坏掉不能连累上面三个文件，反过来也一样。
+  // 这里不插任何确认、不显示「已记录」（D049）——他聊到兴头上，软件插一句就把聊天变成流程。
+  if (bucket.commit.length) {
+    try {
+      const r = life.ingestCommits(bucket.commit)
+      if (r.length) written.push('COMMITMENTS.md（' + r.join('；') + '）')
+    } catch (e) {
+      written.push('约定写入失败: ' + e.message)
+    }
+  }
+
   if (written.length) search.rebuild().catch(() => {})
   return written
 }
@@ -143,7 +155,13 @@ async function send(text, hooks = {}) {
     if (compacted && hooks.onCompact) hooks.onCompact(compacted)
 
     // internal = 开场白这类"它自己开口"的指令，只进本次请求，不进历史
-    if (!hooks.internal) history.push({ role: 'user', content: text })
+    if (!hooks.internal) {
+      history.push({ role: 'user', content: text })
+      // 原话落盘（P-07／D028）：只写不读，永远不进上下文，只供回查和检索。
+      // internal 的指令不是他说的话，所以这里也不写「你」那一行。
+      life.appendChat('user', text)
+      search.rebuild().catch(() => {})
+    }
 
     // 内部指令不检索——它不是在问某件事
     const recalled = hooks.internal ? [] : await recall(text)
@@ -180,6 +198,12 @@ async function send(text, hooks = {}) {
 
     const written = persistNotes(notes)
     const finalText = clean || '（这一轮我只记了点东西，没别的话。）'
+
+    // 它说的那句也落盘。上面那句兜底不算——原话的承诺里包含「没说就是没说」。
+    if (clean) {
+      life.appendChat('assistant', clean)
+      search.rebuild().catch(() => {})
+    }
 
     history.push({ role: 'assistant', content: finalText })
     if (history.length > 80) history = history.slice(-60)

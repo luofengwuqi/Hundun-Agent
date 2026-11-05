@@ -215,6 +215,96 @@ ok(!fs.existsSync(path.join(LTMP, '.index')), '旧索引被扔掉（里面记的
 process.env.HUNDUN_LIFE_DIR = TMP
 paths.setContext({ userId: 'local', agentId: 'hundun' })
 
+/* ---------------- 1d. 对话原话 ---------------- */
+
+console.log('\n[1d] 对话原话：一行一句、只写不读、进得了索引')
+
+const CHTMP = path.join(ROOT, '.dev/test-chat')
+fs.rmSync(CHTMP, { recursive: true, force: true })
+process.env.HUNDUN_LIFE_DIR = CHTMP
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+life.ensureLife()
+
+ok(fs.existsSync(path.join(life.lifeDir(), 'chat')), '初始化生成 chat/ 目录')
+
+const r1 = life.appendChat('user', '今天想把登录页改完')
+const r2 = life.appendChat('assistant', '先别急着动样式。\n登录那块错在哪，你能说清楚吗？')
+ok(r1 === 'chat/' + life.dateStr() + '.md', '写到今天的 chat 文件', String(r1))
+ok(r2 === r1, '同一轮的两句话落在同一个文件里')
+
+const chatTxt = fs.readFileSync(life.chatPath(life.dateStr()), 'utf8')
+ok(chatTxt.includes('[你] 今天想把登录页改完'), '他说的那句带「你」标记')
+ok(chatTxt.includes('[我] 先别急着动样式。'), '它说的那句带「我」标记')
+ok(/^- \d{2}:\d{2} \[你\]/m.test(chatTxt), '行首是 HH:MM，不是别的格式')
+ok(chatTxt.includes('\n  登录那块错在哪'), '多行原话保留分行（续行缩进）')
+ok(life.appendChat('user', '   ') === null, '空话不落盘（不留空行）')
+
+// D028 写死的一件事：chat 永远不进上下文。进了就说明有人把它读回来了。
+const promptNow = life.buildSystemPrompt({})
+ok(!promptNow.includes('今天想把登录页改完'), 'chat 的内容不进上下文（D028）')
+
+// 索引范围：collectRows 只认 lifeDir 下的 .md，chat/ 在它下面所以天然在内
+const chatRows = require(path.join(ROOT, 'src/main/search.js')).collectRows()
+ok(chatRows.some((r) => r.file.startsWith('chat/')), 'chat/ 进了索引范围（D023 的语料变厚）')
+ok(life.listChatDays().length === 1, '能列出原话存了哪几天', String(life.listChatDays().length))
+
+/* ---------------- 1e. 约定提取 ---------------- */
+
+console.log('\n[1e] 约定提取：判据、相对日期锚点、更正覆盖')
+
+const due1 = life.dateStr(new Date(Date.now() + 2 * 86400000))
+const due2 = life.dateStr(new Date(Date.now() + 3 * 86400000))
+
+const commitRaw =
+  '好，记着了。\n' +
+  '<commit>\n' +
+  '- 后天跟客户谈细节 | ' + due1 + '\n' +
+  '- 去看牙 | 下周三\n' +
+  '- 我最近想多写点代码\n' +
+  '</commit>'
+const commitParsed = parseBlocks(commitRaw)
+ok(!commitParsed.clean.includes('<commit>'), 'commit 块从正文里剥掉（不显示给他看）')
+ok(commitParsed.clean.includes('好，记着了。'), '正文本身留下来')
+
+const commitBucket = groupNotes(commitParsed.notes)
+ok(commitBucket.commit.length === 3, 'commit 落到自己的桶里', String(commitBucket.commit.length))
+ok(commitBucket.memory.length === 0, '不会被当成日记条目（混进去就永远没人问起）')
+
+const ingested = life.ingestCommits(commitBucket.commit)
+const rows = life.listCommitments()
+ok(rows.length === 2, '两件事记下，缺日期的那条丢掉', JSON.stringify(ingested))
+ok(ingested.some((r) => r.startsWith('丢：')), '丢弃是明确的，不是悄悄跳过')
+ok(rows[0].what === '后天跟客户谈细节' && rows[0].due === due1, '有绝对日期就照写', JSON.stringify(rows[0]))
+ok(rows[0].outcome === '—' && rows[0].delivery === '未问', '新约定：结局 —、消息 未问')
+ok(rows[1].due === '下周三@' + life.dateStr(), '模糊日期存相对表达 + 当天锚点（§1.6 第六条）', rows[1].due)
+ok(rows[1].due.includes('@'), '锚点在单元格里，到 M2 才换算成绝对日期')
+
+// 更正：同一件事改日期，不新增一行（F06-02）
+life.ingestCommits(['- 后天跟客户谈细节 | ' + due2])
+const rows2 = life.listCommitments()
+ok(rows2.length === 2, '同一个「什么事」再说一次不新增一行', String(rows2.length))
+ok(rows2[0].due === due2, '到期日被改成新的那个')
+
+// 已送达的还能改日期（它已经不问了），已结案的不能——那是另一件事
+life.updateCommitment(0, { delivery: '已送达' }, { expectWhat: rows2[0].what })
+life.ingestCommits(['- 后天跟客户谈细节 | ' + due1])
+ok(life.listCommitments()[0].due === due1, '已送达的约定仍可改期，且不会重问')
+life.updateCommitment(0, { delivery: '已结案' }, { expectWhat: life.listCommitments()[0].what })
+const closedBefore = life.listCommitments().length
+life.ingestCommits(['- 后天跟客户谈细节 | ' + due2])
+ok(life.listCommitments().length === closedBefore + 1, '已结案后再提，是新的一件事（新起一行）')
+
+// 判据必须真的写进提示词。写在这里，是因为「模型会不会滥用 commit 通道」
+// 只靠一句话约束——那句话要是不在提示里，后面所有防线都是空的。
+const sp = life.buildSystemPrompt({})
+ok(sp.includes('<commit>'), '提示词里给了 commit 的写法')
+ok(sp.includes('缺一个就'), '提示词里写死了「有日期且有具体事」的判据')
+ok(sp.includes('宁可漏'), '提示词里给了反向偏好：宁可漏，不要多记')
+ok(sp.includes('不要问「要不要记着」'), '提示词里封死了当场确认（D049）')
+
+process.env.HUNDUN_LIFE_DIR = TMP
+paths.setContext({ userId: 'local', agentId: 'hundun' })
+
 /* ---------------- 2. 块的解析与落盘 ---------------- */
 
 console.log('\n[2] 记忆块：解析与落盘')
@@ -306,6 +396,13 @@ const memB = fs.existsSync(path.join(dirB, 'memory', life.dateStr() + '.md'))
   : ''
 ok(!memB.includes('紫色犀牛'), '旧身份的回复没有写进新身份的记忆文件', memB.slice(-120))
 ok(dirA !== dirB, '两个身份的目录确实不同', dirA + ' / ' + dirB)
+
+// 原话文件也得守同一条线。用户那句是他当时真的说的，落在 A；
+// 回复属于上一个身份，一个字都不该出现在 B 的 chat 里。
+const chatBPath = life.chatPath(life.dateStr())
+const chatB = fs.existsSync(chatBPath) ? fs.readFileSync(chatBPath, 'utf8') : ''
+ok(!chatB.includes('紫色犀牛'), '旧身份的回复没有写进新身份的原话文件', chatB.slice(-120))
+ok(!chatB.includes('我是上一个人'), '上一个身份的话也不在新身份的原话里')
 
 // 正常路径不受影响：没切身份时，记忆照常落盘
 life.ensureLife()
