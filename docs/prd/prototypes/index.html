@@ -8,6 +8,12 @@
   /* ============================================================
      馄饨 Agent · HTML 页面原型
      依据 docs/prd/prototypes/01–05（2026-11-04）逐坐标还原
+
+     ⚠ 2026-11-05 分期（D071）：一期只有一个用户、一个智能体，
+       所以默认打开就是「三项左栏 + 主界面」。
+       登录页、左栏顶部的当前 agent、底部「切换用户／登录」、
+       身份切换菜单，全部属二期，已用 data-phase="2" 标出、
+       默认隐藏；地址后加 ?phase=2 可预览二期完整形态。
      ============================================================ */
   :root{
     --bg:#FFF8E8;        /* 窗口底 */
@@ -233,6 +239,11 @@
     font-size:13px;color:var(--muted);transition:color .14s;
   }
   .rail-foot:hover .lab{color:var(--ink)}
+
+  /* ---------- D071 分期：身份行属二期，v1 不出现 ---------- */
+  .rail > [data-phase="2"]{display:none}
+  body.phase2 .rail > [data-phase="2"]{display:flex}
+  body:not(.phase2) .rail-nav{margin-top:30px}
 
   /* ---------- 内容区 ---------- */
   .content{flex:1;position:relative;overflow:hidden;z-index:2}
@@ -577,7 +588,7 @@
   </div>
 </header>
 
-<div class="window is-login" id="win">
+<div class="window" id="win">
 
   <!-- 标题栏 -->
   <div class="titlebar">
@@ -612,9 +623,9 @@
   <!-- 主壳 -->
   <div class="shell">
 
-    <!-- 左栏三段：顶 agent / 中导航 / 底切换用户 -->
+    <!-- 左栏：一期只有中部三项（D071）；顶/底属二期，加 ?phase=2 可见 -->
     <aside class="rail">
-      <div class="rail-id" id="agentBtn">
+      <div class="rail-id" id="agentBtn" data-phase="2">
         <span class="ava">馄</span>
         <span class="name" id="agentName">hundun</span>
         <svg class="chev" width="10" height="6" viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1" fill="none" stroke="#8E8275" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -635,7 +646,7 @@
         </div>
       </nav>
 
-      <div class="rail-foot" id="userBtn">
+      <div class="rail-foot" id="userBtn" data-phase="2">
         <div class="rule"></div>
         <div class="lab">
           <span id="userLabel">切换用户 / 登录</span>
@@ -810,6 +821,15 @@
 (function(){
   const $ = s => document.querySelector(s);
   const win = $('#win');
+
+  /* ---------- D071 分期 ----------
+     默认演示一期：主界面 + 三项左栏。
+     ?phase=2 演示二期：登录页起手，左栏顶部/底部带身份行。 */
+  const isPhase2 = new URLSearchParams(location.search).get('phase') === '2';
+  if (isPhase2) {
+    document.body.classList.add('phase2');
+    win.classList.add('is-login');
+  }
 
   /* ---------- 界面切换 ---------- */
   function showLogin(){ win.classList.add('is-login'); closeMenus(); $('#overlay').classList.remove('show'); }
