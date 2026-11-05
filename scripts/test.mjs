@@ -1954,6 +1954,133 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
+console.log('\n[3p] 写入回执：说「记住了」不算，块落到盘上才算')
+
+{
+  const memgate = require(path.join(ROOT, 'src/main/memgate.js'))
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const root = path.join(TMP, 'memgate')
+  process.env.HUNDUN_LIFE_DIR = root
+  fs.rmSync(root, { recursive: true, force: true })
+  life.ensureLife()
+
+  /* ---- 判据：什么时候该补 ---- */
+
+  ok(memgate.claimsWrite('芜柒。记住了。'), '认得「记住了」')
+  ok(memgate.claimsWrite('好，我记下了'), '认得「记下了」')
+  ok(memgate.claimsWrite('这个我帮你记着'), '认得「帮你记着」')
+  ok(!memgate.claimsWrite('我记得你说过那个接口'), '「我记得你说过」是回忆，不是承诺 —— 不能算')
+  ok(!memgate.claimsWrite('芜柒，好名字。你平时忙什么？'), '没提记不记，不算')
+
+  const nr = (o) => memgate.needsRepair(o)
+  const base = { userText: '您好 我是芜柒', assistantText: '芜柒。记住了。', notes: [] }
+
+  ok(nr(base).reason === 'claimed-not-written', '说了记却没块 → 要补（那次实测就是这一条）')
+  ok(nr({ ...base, notes: [{ target: 'profile', lines: ['[称呼] 叫他芜柒'] }] }) === null, '已经有块 → 不补')
+  ok(nr({ ...base, provenance: 'scheduler' }) === null, '它自己开口那轮 → 一个字都不补')
+  ok(nr({ ...base, assistantText: '' }) === null, '空回复没什么可信 → 不补')
+
+  // 仪式期间：即使它没说「记住了」，答了话就得进档案
+  ok(
+    nr({ userText: '程序员', assistantText: '写什么的？', notes: [], bootstrapPending: true }).reason ===
+      'ritual-unrecorded',
+    '仪式期间答了话却没进档案 → 也要补'
+  )
+  ok(
+    nr({ userText: '嗨', assistantText: '嗨，我是馄饨。先问一句，怎么称呼你？', notes: [], bootstrapPending: true }) ===
+      null,
+    '第一次打开那句纯招呼 → 不去补（那不是一条事实）'
+  )
+  ok(memgate.looksLikeGreeting('嗨'), '纯招呼认出来了')
+  ok(!memgate.looksLikeGreeting('我叫芜柒，写代码的'), '一句正经回答不算招呼')
+
+  /* ---- 结构校验：不过就整批不要 ---- */
+
+  ok(memgate.validate('NOTHING').status === 'nothing', 'NOTHING → 没有可记的，不硬编')
+  ok(memgate.validate('').status === 'empty', '空返回 → empty')
+  ok(memgate.validate('好的，我明白了').status === 'no-blocks', '只说话不给块 → 不认')
+  ok(
+    memgate.validate('很好，我记下了。\n<profile>\n[称呼] 叫他芜柒\n</profile>').status === 'ok',
+    '块加一小句过渡 → 认'
+  )
+  ok(
+    memgate.validate(
+      '<profile>\n[称呼] 叫他芜柒\n</profile>\n\n' +
+        '另外我想说，你刚才提到写代码这件事其实挺重要的，因为长期作息不规律会影响身体，' +
+        '建议你早点睡，别再熬夜了，身体才是本钱，别等到出了事才后悔。'
+    ).status === 'chatty',
+    '块外面还留着一大段话 → 它在聊天不是抽取，整批不要'
+  )
+
+  /* ---- 补写：走的是同一条写入路径 ---- */
+
+  const calls = []
+  const written = []
+  const gate = memgate.create({
+    chat: async ({ messages }) => {
+      calls.push(messages)
+      return '<profile>\n[称呼] 叫他芜柒\n</profile>'
+    },
+    write: (notes) => {
+      const r = life.ingestProfile(notes.filter((n) => n.target === 'profile').flatMap((n) => n.lines))
+      written.push(...r)
+      return r
+    }
+  })
+
+  const r1 = await gate.repair({ userText: '您好 我是芜柒', assistantText: '芜柒。记住了。', reason: 'claimed-not-written' })
+  ok(r1.status === 'written', '补写跑通了')
+  ok(written.length === 1, '真的写进档案了（不是嘴上说）')
+  const user = fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8')
+  ok(user.includes('[称呼] 叫他芜柒'), 'USER.md 里有这一条')
+  ok(!life.isProfileEmpty(), '补完之后档案不再是空的 —— 下次不会再问「怎么称呼你」')
+
+  // 提示词里带上了现场：他说的话、它的回复、已有档案
+  const last = calls[calls.length - 1]
+  const userMsg = last[last.length - 1].content
+  ok(userMsg.includes('您好 我是芜柒'), '补写提示词里带着他的原话')
+  ok(userMsg.includes('芜柒。记住了。'), '补写提示词里带着它的回复')
+  ok(userMsg.includes('别重复'), '补写提示词里带着「档案已有的别重复」')
+  ok(last[0].content.includes('NOTHING'), '抽取指令允许它说「没有可记的」')
+
+  // 说 NOTHING 就真的什么都不写
+  const gate2 = memgate.create({ chat: async () => 'NOTHING', write: () => ['不该被调用'] })
+  const r2 = await gate2.repair({ userText: '嗯', assistantText: '记住了。', reason: 'claimed-not-written' })
+  ok(r2.status === 'nothing' && r2.written.length === 0, '它说没有可记的 → 一条都不写')
+
+  // 调不通不能把已经说完的那轮搞坏
+  const gate3 = memgate.create({
+    chat: async () => {
+      throw new Error('网络断了')
+    },
+    write: () => ['不该被调用']
+  })
+  const r3 = await gate3.repair({ userText: '我是芜柒', assistantText: '记住了。', reason: 'claimed-not-written' })
+  ok(r3.status === 'error' && r3.detail === '网络断了', '补写失败不抛，只返回失败原因')
+  ok(fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8').includes('[称呼] 叫他芜柒'), '失败不会把已写好的档案弄坏')
+
+  // 降级：它承诺过记下来，补写却没成 → 原话进日记，不静默丢
+  life.ensureJournal(life.dateStr())
+  const jp = life.journalPath(life.dateStr())
+  ok(!fs.readFileSync(jp, 'utf8').includes('我叫周野'), '日记里本来没有这句')
+  const gate4 = memgate.create({
+    chat: async () => 'NOTHING',
+    write: () => []
+  })
+  await gate4.repair({ userText: '我叫周野，做物流的', assistantText: '记住了。', reason: 'claimed-not-written' })
+  ok(fs.readFileSync(jp, 'utf8').includes('我叫周野'), '补写没成 → 原话降级进日记（append-only 退路）')
+
+  // 身份换了就别落盘
+  const gate5 = memgate.create({
+    chat: async () => '<profile>\n[称呼] 叫他别人\n</profile>',
+    write: () => ['USER.md（不该发生）']
+  })
+  const r5 = await gate5.repair({ userText: 'x', assistantText: '记住了', reason: 'claimed-not-written', guard: () => false })
+  ok(r5.status === 'stale' && r5.written.length === 0, '补写期间换了身份 → 不落盘')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
 /* ---------------- 汇总 ---------------- */
 
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')

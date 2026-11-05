@@ -6,6 +6,7 @@ const store = require('./store')
 const llm = require('./llm')
 const search = require('./search')
 const session = require('./session')
+const memgate = require('./memgate')
 const { parseBlocks, groupNotes } = require('./blocks')
 
 /**
@@ -188,6 +189,66 @@ function persistNotes(notes, opts = {}) {
 }
 
 /**
+ * 写入回执（D086）。
+ *
+ * 它写记忆是「回复正文里塞一个块」，而正文和块之间没有任何强制关系 ——
+ * 模型可以嘴上说「记住了」而磁盘上什么都不发生。实测就发生过一次。
+ *
+ * 这里给它补一趟独立的抽取：只在**判据命中**时跑（说了记却没块、
+ * 或仪式期间答了话却没进档案），写完还走上面那条 `persistNotes`，
+ * 保证「块怎么落盘」永远只有一份实现。
+ */
+const gate = memgate.create({
+  chat: async ({ messages, temperature }) => {
+    const cfg = store.read()
+    if (!cfg.apiKey || !String(cfg.apiKey).trim()) throw new Error('还没有填 API Key')
+    const { text } = await llm.chat({
+      chain: cfg.modelChain,
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature,
+      maxTokens: 600,
+      messages
+    })
+    return text
+  },
+  write: (notes) => persistNotes(notes, { provenance: 'user' }),
+  log: (msg) => console.log('[memgate] ' + msg)
+})
+
+/**
+ * 判据命中就补写。**不 await**：这一轮的话已经说出口了，
+ * 补写失败不该让他多等，也不该把已经正常的那轮变成报错。
+ * 代次在这里守一道 —— 补写期间换了身份，这批记忆属于上一个人。
+ */
+function repairIfNeeded({ userText, assistantText, notes, provenance, myEpoch }) {
+  let verdict = null
+  try {
+    verdict = memgate.needsRepair({
+      userText,
+      assistantText,
+      notes,
+      bootstrapPending: life.bootstrapPending(),
+      provenance
+    })
+  } catch {
+    return
+  }
+  if (!verdict) return
+  if (session.isStale(myEpoch)) return
+
+  gate
+    .repair({
+      userText,
+      assistantText,
+      reason: verdict.reason,
+      guard: () => !session.isStale(myEpoch)
+    })
+    .catch(() => {})
+}
+
+/**
  * 从旧日记里捞和这句话相关的记忆。
  * 昨天和今天的记录已经在 prompt 里了，不用重复捞。
  */
@@ -323,6 +384,18 @@ async function send(text, hooks = {}) {
     const written = persistNotes(notes, { provenance: hooks.provenance || 'user' })
     const finalText = clean || '（这一轮我只记了点东西，没别的话。）'
 
+    // 回执：判据命中就补一趟抽取（D086）。放在落盘之后、返回之前触发，
+    // 但不 await —— 话已经说出口了，补写慢不该让他等。
+    if (!hooks.internal && clean) {
+      repairIfNeeded({
+        userText: text,
+        assistantText: clean,
+        notes,
+        provenance: hooks.provenance || 'user',
+        myEpoch
+      })
+    }
+
     // 它说的那句也落盘。上面那句兜底不算——原话的承诺里包含「没说就是没说」。
     if (clean) {
       life.appendChat('assistant', clean)
@@ -346,4 +419,15 @@ async function send(text, hooks = {}) {
   }
 }
 
-module.exports = { send, reset, resetSession, state, parseBlocks, persistNotes, saveSession, loadSession, sessionFile }
+module.exports = {
+  send,
+  reset,
+  resetSession,
+  state,
+  parseBlocks,
+  persistNotes,
+  repairIfNeeded,
+  saveSession,
+  loadSession,
+  sessionFile
+}

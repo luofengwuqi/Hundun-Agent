@@ -246,10 +246,12 @@ async function chat(opts) {
 }
 
 async function testConnection(cfg) {
+  // 预算要给思考型模型留量：deepseek-r1 / v4-1 这类先烧几百个 token 想再开口，
+  // 给 16 的话全部喂给思考、正文为空，测试就误报「返回为空」还触发降级。
   const { text } = await chat({
     ...cfg,
     messages: [{ role: 'user', content: '只回复两个字：在的' }],
-    maxTokens: 16,
+    maxTokens: 512,
     temperature: 0
   })
   return text.trim() || '（返回为空）'
