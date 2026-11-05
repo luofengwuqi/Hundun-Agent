@@ -32,8 +32,11 @@ function post(urlStr, payload, apiKey) {
 
     const body = JSON.stringify(payload)
     req.setHeader('Content-Type', 'application/json')
-    // 显式给长度：不设的话部分实现会退回 chunked 传输，老式服务端读不到请求体
-    req.setHeader('Content-Length', Buffer.byteLength(body))
+    // 千万不要手设 Content-Length（2026-11-05 踩过，报 net::ERR_INVALID_ARGUMENT）。
+    // Electron 的 net 走 Chromium 的上传数据模型：write() 进来的 body 由它自己算长度，
+    // 再手设一个就与内部的上传描述冲突，Chromium 判参数非法、3 毫秒内直接失败 ——
+    // 报的是网络错，其实一个字节都没发出去，所以「换代理」「换直连」都不会好。
+    // 数字和字符串两种写法都试过，都失败；不设则服务端正常收到完整请求体。
     req.setHeader('Authorization', 'Bearer ' + String(apiKey || '').trim())
     req.setHeader('Accept', payload.stream ? 'text/event-stream' : 'application/json')
     req.setHeader('Accept-Encoding', 'identity')
