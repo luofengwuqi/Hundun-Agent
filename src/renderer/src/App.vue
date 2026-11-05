@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import SettingsModal from './components/SettingsModal.vue'
 import { renderMarkdown } from './markdown'
 
@@ -9,11 +9,14 @@ const streaming = ref(false)
 const settingsOpen = ref(false)
 const quiet = ref(false)
 /**
- * 打扰总开关（D047：默认关）。它和 quiet 不是一回事——
- * 这个是「这个能力要不要」，quiet 是「今天先算了」。
- * 总开关关着的时候，下面的时段与上限都退后一位：看得见，但改不动。
+ * 打扰的三个参数（D045／P-11）。**它们必须落库**——原来只有一个 ref，
+ * 刷新一次就回默认，等于这四个参数根本不存在（F06-16 就是查这个）。
+ *
+ * 三个是：总开关／允许时段／每日上限。「今天别烦我」是第四个，
+ * 但它是当天的作废而不是配置，所以走 quietDate（quiet 那个 ref）。
  */
-const disturbOn = ref(false)
+const disturb = ref({ on: false, windows: [], dailyLimit: 0 })
+const disturbOn = computed(() => !!disturb.value.on)
 /** D046：左栏只切视图（chat / quiet）。设置仍是弹窗，入口在左栏 */
 const view = ref('chat')
 const cfg = ref(null)
@@ -35,8 +38,8 @@ function scrollBottom() {
 /** 流式过程中先把记忆块藏起来，别让人看到标签 */
 function sanitizeLive(t) {
   return String(t)
-    .replace(/<(memory|longterm|profile)>[\s\S]*?<\/\1>/gi, '')
-    .replace(/<(memory|longterm|profile)>[\s\S]*$/i, '')
+    .replace(/<(memory|longterm|profile|commit)>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(memory|longterm|profile|commit)>[\s\S]*$/i, '')
     .trimStart()
 }
 
@@ -124,6 +127,88 @@ async function toggleQuiet() {
   quiet.value = await window.hundun.quiet.toggle()
 }
 
+/* ---------- 打扰参数：三个都落库（P-11／F06-16） ---------- */
+
+/** 配置可能来自老版本（没有 disturb）或被手改过，读进来先归一化 */
+function normDisturb(v) {
+  const d = v && typeof v === 'object' ? v : {}
+  const ok = (t) => /^\d{2}:\d{2}$/.test(String(t || ''))
+  const windows = Array.isArray(d.windows)
+    ? d.windows
+        .filter((w) => w && ok(w.from) && ok(w.to))
+        .map((w) => ({ from: w.from, to: w.to }))
+    : []
+  const n = Math.trunc(Number(d.dailyLimit))
+  return {
+    on: !!d.on,
+    windows,
+    dailyLimit: Number.isFinite(n) ? Math.max(0, Math.min(20, n)) : 0
+  }
+}
+
+async function saveDisturb(patch) {
+  disturb.value = normDisturb({ ...disturb.value, ...patch })
+  cfg.value = await window.hundun.cfg.set({ disturb: disturb.value })
+}
+
+function toggleDisturb() {
+  saveDisturb({ on: !disturb.value.on })
+}
+
+function addWindow() {
+  saveDisturb({ windows: [...disturb.value.windows, { from: '09:00', to: '12:00' }] })
+}
+
+function removeWindow(i) {
+  saveDisturb({ windows: disturb.value.windows.filter((_, k) => k !== i) })
+}
+
+function setWindow(i, key, v) {
+  saveDisturb({
+    windows: disturb.value.windows.map((w, k) => (k === i ? { ...w, [key]: v } : w))
+  })
+}
+
+function bumpLimit(delta) {
+  saveDisturb({ dailyLimit: Math.max(0, Math.min(20, disturb.value.dailyLimit + delta)) })
+}
+
+/**
+ * 手写的时间输入。为什么不用 <input type="time">：
+ * 它的显示格式跟系统 locale 走，在英文环境下会变成「01:00 PM」——
+ * 一个中文界面里混 AM/PM，比多写几行解析更糟。这里接受 9:30／930／09:30。
+ */
+function normTime(v) {
+  const s = String(v == null ? '' : v).trim()
+  let h
+  let m
+  const colon = s.match(/^(\d{1,2})\s*[:：]\s*(\d{1,2})$/)
+  if (colon) {
+    h = Number(colon[1])
+    m = Number(colon[2])
+  } else if (/^\d{3,4}$/.test(s)) {
+    h = Number(s.slice(0, s.length - 2))
+    m = Number(s.slice(-2))
+  } else {
+    return ''
+  }
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h > 23 || m > 59) return ''
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0')
+}
+
+/** 失焦或回车时提交；输不进去就退回原值，不把非法时间留在界面上 */
+function commitTime(i, key, ev) {
+  const el = ev.target
+  const old = disturb.value.windows[i] ? disturb.value.windows[i][key] : ''
+  const v = normTime(el.value)
+  if (!v) {
+    el.value = old
+    return
+  }
+  el.value = v
+  if (v !== old) setWindow(i, key, v)
+}
+
 function minimizeWin() {
   window.hundun.win.minimize()
 }
@@ -165,6 +250,7 @@ let offs = []
 
 onMounted(async () => {
   cfg.value = await window.hundun.cfg.get()
+  disturb.value = normDisturb(cfg.value.disturb)
   quiet.value = await window.hundun.quiet.get()
 
   offs.push(window.hundun.chat.onDelta(appendDelta))
@@ -361,7 +447,7 @@ onBeforeUnmount(() => {
           <button
             class="sw"
             :class="{ on: disturbOn }"
-            @click="disturbOn = !disturbOn"
+            @click="toggleDisturb"
             aria-label="打扰总开关"
           />
         </div>
@@ -369,8 +455,31 @@ onBeforeUnmount(() => {
         <div class="q-group" :class="{ dim: !disturbOn }">
           <div class="q-row">
             <span class="q-label">允许打扰的时间段</span>
-            <span class="q-value">还没设</span>
-            <button class="q-add" disabled title="待接入：见 PRD F06-3">+ 添加</button>
+            <span v-if="!disturb.windows.length" class="q-value">还没设</span>
+            <span v-else class="q-value"></span>
+            <button class="q-add" @click="addWindow">+ 添加</button>
+          </div>
+          <div v-for="(w, i) in disturb.windows" :key="i" class="q-time">
+            <input
+              class="q-time-in"
+              type="text"
+              inputmode="numeric"
+              maxlength="5"
+              :value="w.from"
+              @blur="commitTime(i, 'from', $event)"
+              @keydown.enter="commitTime(i, 'from', $event)"
+            />
+            <span class="q-dash">—</span>
+            <input
+              class="q-time-in"
+              type="text"
+              inputmode="numeric"
+              maxlength="5"
+              :value="w.to"
+              @blur="commitTime(i, 'to', $event)"
+              @keydown.enter="commitTime(i, 'to', $event)"
+            />
+            <button class="q-del" title="删掉这一段" @click="removeWindow(i)">✕</button>
           </div>
           <p class="q-note">不在这些时间里，它一句话都不说。可以有多个，比如午饭后和晚上睡前各一段。</p>
         </div>
@@ -378,8 +487,19 @@ onBeforeUnmount(() => {
         <div class="q-group" :class="{ dim: !disturbOn }">
           <div class="q-row">
             <span class="q-label">每天最多打扰</span>
-            <span class="q-value">还没设</span>
-            <button class="q-add" disabled title="待接入：见 PRD F06-3">+ 设置</button>
+            <div class="q-step">
+              <button
+                class="q-step-btn"
+                :disabled="disturb.dailyLimit <= 0"
+                @click="bumpLimit(-1)"
+              >−</button>
+              <span class="q-num">{{ disturb.dailyLimit }}</span>
+              <button
+                class="q-step-btn"
+                :disabled="disturb.dailyLimit >= 20"
+                @click="bumpLimit(1)"
+              >+</button>
+            </div>
           </div>
           <p class="q-note">用完就没有了，不累积到第二天。设成 0 等于关掉。</p>
         </div>

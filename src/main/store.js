@@ -12,6 +12,10 @@ const DEFAULTS = {
   // 字段一并移除：留一个空数组也会让后来的人以为「这东西还在，只是没配」。
   // 打扰的重建见 M2／P-10，判据是约定而不是钟点。
   quietDate: '', // 等于今天日期时，当天所有检查点静音
+  // 打扰的三个参数（D045）。默认关、默认空、默认 0 不是「还没配好」，
+  // 是默认态本身（D047）——填了才算他要。
+  // 第四个参数「今天别烦我」是当天的作废，不是配置，仍在顶层 quietDate。
+  disturb: { on: false, windows: [], dailyLimit: 0 },
   windowBounds: null,
   // 身份：登录做出来之前先给一个本地占位用户
   currentUser: 'local',
@@ -30,7 +34,13 @@ function read() {
   try {
     const raw = fs.readFileSync(configPath(), 'utf8')
     const parsed = JSON.parse(raw)
-    cache = { ...DEFAULTS, ...parsed }
+    // disturb 单独合并：顶层展开只换整块，老配置里只有 {on:true} 时
+    // windows / dailyLimit 会一起消失，而读它的人（P-10 的调度器）不会想到要兜底。
+    cache = {
+      ...DEFAULTS,
+      ...parsed,
+      disturb: { ...DEFAULTS.disturb, ...(parsed.disturb || {}) }
+    }
   } catch {
     cache = JSON.parse(JSON.stringify(DEFAULTS))
   }
@@ -71,4 +81,9 @@ function toggleQuiet() {
   return on
 }
 
-module.exports = { read, write, publicConfig, todayStr, isQuietToday, toggleQuiet, DEFAULTS }
+/** 丢掉内存缓存，下次 read 重新读盘。只给测试用（生产里没有「换配置」这件事）。 */
+function _reset() {
+  cache = null
+}
+
+module.exports = { read, write, publicConfig, todayStr, isQuietToday, toggleQuiet, DEFAULTS, _reset }

@@ -424,6 +424,41 @@ paths.setContext({ userId: 'local', agentId: 'hundun' })
 life.ensureLife()
 conversation.resetSession()
 
+/* ---------------- 3b. 打扰参数落库（P-11 / F06-16） ---------------- */
+
+console.log('\n[3b] 打扰参数：写进 config.json，不是只活在界面里')
+
+const cfgDir = process.env.HUNDUN_CONFIG_DIR
+const cfgFile = path.join(cfgDir, 'config.json')
+
+ok(store.read().disturb && store.read().disturb.on === false, '默认是关的（D047）')
+ok(Array.isArray(store.read().disturb.windows), '默认时段是空数组，不是 null')
+ok(store.read().disturb.dailyLimit === 0, '默认上限 0，等于关掉')
+
+// 界面上的四个动作，落到 store 就是这几下
+store.write({ disturb: { on: true, windows: [{ from: '13:00', to: '14:30' }], dailyLimit: 2 } })
+
+const onDisk = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+ok(onDisk.disturb && onDisk.disturb.on === true, '总开关真的写进了文件（刷新后还在，F06-16）')
+ok(onDisk.disturb.windows.length === 1 && onDisk.disturb.windows[0].from === '13:00', '时段写进了文件')
+ok(onDisk.disturb.dailyLimit === 2, '每日上限写进了文件')
+ok(store.publicConfig().disturb.dailyLimit === 2, '渲染层通过 cfg:get 拿到的也是新值')
+
+// 老配置没有 disturb 字段时不能炸：read() 要能把它当默认值补上
+const legacy = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+delete legacy.disturb
+fs.writeFileSync(cfgFile, JSON.stringify(legacy, null, 2))
+store._reset() // 丢掉缓存，模拟重启后第一次读盘
+const afterLegacy = store.read()
+ok(
+  afterLegacy.disturb && afterLegacy.disturb.on === false && afterLegacy.disturb.dailyLimit === 0,
+  '老配置缺 disturb 时补成完整默认结构，不留半截',
+  JSON.stringify(afterLegacy.disturb)
+)
+
+// 「今天别烦我」仍是当天作废，不是配置（D045 的第四个参数）
+ok(typeof store.isQuietToday() === 'boolean', '今天静音是独立状态，不混进 disturb')
+
 /* ---------------- 4. 界面 SSR ---------------- */
 
 console.log('\n[4] 界面：SSR 渲染')
