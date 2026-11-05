@@ -319,11 +319,14 @@ _你刚醒来，还不认识坐在你面前的这个人。这个文件只会在�
 
 \`\`\`
 <profile>
-- 称呼｜叫他芜柒
-- 在做｜在小公司做后端，最近在赶一个迁移
-- 作息｜晚上十二点后别找他
+- 称呼｜叫他小周
+- 在做｜在广告公司写文案，最近在赶一个提案
+- 作息｜晚上十一点后就别找他了
 </profile>
 \`\`\`
+
+上面只是**格式示例**，人名和内容都要换成他真说的那个。**不要照抄示例** ——
+照抄等于把假话写进档案，比没写更糟。
 
 称呼、在做的事、作息这类**事实**写 \`主题｜内容\`；
 他对你怎么说话的**要求**（说话长短、要不要问、别用什么词）就直接写那一句。
@@ -1464,9 +1467,18 @@ function buildSystemPrompt(opts = {}) {
   const now = new Date()
   const today = dateStr(now)
   const yesterday = dateStr(shiftDate(-1))
-  const profileEmpty = isProfileEmpty()
   const rules = rulesText()
-  const ritual = profileEmpty ? ctxFile('BOOTSTRAP.md', 6000).text : ''
+
+  // 判据只能是「文件还在不在」。
+  //
+  // 原来这里写的是 `profileEmpty ? 读文件 : ''`，看起来等价，实际差很远：
+  // 档案里一记上「称呼」就不再是空的，于是**第一条答完，仪式整个消失**，
+  // 剩下的四个问题永远不会被问到——不报错、不崩、只是它不再问了。
+  //
+  // 注入判据和完成判据必须是同一个。完成判据是 `bootstrapDone()`（五条活着的
+  // 条目），它的执行者是上面那句 `retireBootstrapIfDone()`：问满了就把文件删掉。
+  // 所以「文件还在」= 「还没问完」，一个判据管两头。
+  const ritual = bootstrapPending() ? ctxFile('BOOTSTRAP.md', 6000).text : ''
 
   const parts = []
 
@@ -1718,6 +1730,8 @@ module.exports = {
   // 历史出厂版本，只给测试用：造一份「他没动过的老 SOUL」得有逐字原文
   SOUL_HISTORY: [SOUL_V1, SOUL_V2],
   bootstrapPending,
+  // 出厂模板，只给测试和一次性迁移用：判「他有没有改过」得先有原文
+  TPL_BOOTSTRAP,
   bootstrapDone,
   retireBootstrapIfDone,
   dateStr,

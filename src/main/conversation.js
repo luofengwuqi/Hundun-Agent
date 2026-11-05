@@ -7,7 +7,7 @@ const llm = require('./llm')
 const search = require('./search')
 const session = require('./session')
 const memgate = require('./memgate')
-const { parseBlocks, groupNotes } = require('./blocks')
+const { parseBlocks, groupNotes, diagnose } = require('./blocks')
 
 /**
  * 会话引擎。
@@ -376,6 +376,13 @@ async function send(text, hooks = {}) {
 
     const raw = streamed || acc
     const { clean, notes } = parseBlocks(raw)
+
+    // 一个块都没出来时，记一句为什么。「没写」和「写了没闭合」结果一样、修法不同，
+    // 不留这一行的话，下次还得靠猜。只记判据，不倒正文（那是他的原话）。
+    if (!notes.length && !hooks.internal) {
+      const why = diagnose(raw)
+      if (why) console.log('[blocks] 这轮的块没解析出来：' + why)
+    }
 
     // 落盘之前再问一次。这一句是整个 P-25 的核心：
     // 少了它，上一个身份的话会写进现在的 MEMORY.md，而且永远发现不了。

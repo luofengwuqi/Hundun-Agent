@@ -1255,6 +1255,14 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   life.ingestProfile(['叫他老吴'])
   ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
 
+  // 实测踩到的：档案一记上「称呼」就不再是空的，如果注入判据写成
+  // `isProfileEmpty()`，第一条答完仪式就整个消失，剩下四个问题永远不问。
+  // 注入判据必须是「文件还在不在」，和完成判据（五条）是同一个开关。
+  ok(!life.isProfileEmpty(), '记了一件之后档案已经不是空的')
+  const bsMid = life.buildSystemPrompt()
+  ok(bsMid.includes('## Bootstrap Pending'), '只答了一件，仪式**还在**（不能因为档案不空就停）')
+  ok(bsMid.includes('## BOOTSTRAP.md（照上面那节走）'), '仪式文件也还在上下文里')
+
   for (let bs = 2; bs <= 5; bs++) life.ingestProfile(['第 ' + bs + ' 件事'])
   ok(life.bootstrapDone(), '五件事记满就算走完')
 
@@ -2011,6 +2019,14 @@ console.log('\n[3p] 写入回执：说「记住了」不算，块落到盘上才
     ).status === 'chatty',
     '块外面还留着一大段话 → 它在聊天不是抽取，整批不要'
   )
+
+  /* ---- 块没解析出来时，得能说出为什么 ---- */
+
+  const { diagnose } = require(path.join(ROOT, 'src/main/blocks.js'))
+  ok(diagnose('芜柒，记下了。你现在忙什么？') === null, '压根没写块 → 不报错（这是提示词的事，不是正则的事）')
+  ok(diagnose('<profile>\n- 称呼｜叫他芜柒') === '<profile> 开了没闭合', '开了没闭合 → 说清楚')
+  ok(diagnose('〈profile〉叫他芜柒〈/profile〉').includes('全角'), '全角尖括号 → 说清楚')
+  ok(diagnose('<profile>\n- 称呼｜叫他芜柒\n</profile>') === null, '写对了就不吭声')
 
   /* ---- 补写：走的是同一条写入路径 ---- */
 

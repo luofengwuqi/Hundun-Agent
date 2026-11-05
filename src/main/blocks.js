@@ -44,4 +44,29 @@ function groupNotes(notes) {
   return bucket
 }
 
-module.exports = { parseBlocks, groupNotes, BLOCK_RE }
+/**
+ * 一个块都没解析出来时，说说为什么。
+ *
+ * 「模型没写块」和「模型写了但没闭合」在结果上一样（notes 为空），
+ * 但修法完全不同：前者是提示词的事，后者是正则的事。
+ * 只回一句人能看懂的话，不把正文倒进日志（那是他的原话）。
+ *
+ * @returns {string|null} 没问题时返回 null
+ */
+function diagnose(text) {
+  const s = String(text || '')
+  if (!s) return null
+  const found = []
+  for (const tag of VALID) {
+    const open = (s.match(new RegExp('<' + tag + '(?=[\\s>])', 'gi')) || []).length
+    const close = (s.match(new RegExp('</' + tag + '\\s*>', 'gi')) || []).length
+    if (open && !close) found.push('<' + tag + '> 开了没闭合')
+    else if (open > close) found.push('<' + tag + '> 开 ' + open + ' 个只闭合 ' + close + ' 个')
+  }
+  // 全角的尖括号：模型偶尔会把 <> 打成 〈〉，正则认不出
+  const wide = (s.match(/[〈＜]\s*(memory|longterm|profile|commit|open)\s*[〉＞]/gi) || []).length
+  if (wide) found.push('用了全角尖括号')
+  return found.length ? found.join('；') : null
+}
+
+module.exports = { parseBlocks, groupNotes, diagnose, BLOCK_RE }
