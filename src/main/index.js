@@ -11,11 +11,13 @@ const search = require('./search')
 const identity = require('./identity')
 const session = require('./session')
 const schedule = require('./schedule')
+const dream = require('./dream')
 
 let mainWindow = null
 let tray = null
 let busy = false
 let scheduler = null
+let dreamer = null
 
 const ROOT = path.join(__dirname, '..', '..')
 
@@ -233,6 +235,36 @@ function startScheduler() {
     notify: notifySystem,
     log: (m) => console.log('[schedule] ' + m)
   })
+}
+
+/**
+ * 记忆折叠（搬迁台账 P1）。
+ *
+ * 和调度器是两个东西，别混：
+ *   - 调度器的判据是「有一条还没合上的话」，产出是**跟他说话**；
+ *   - 折叠的判据是「日记攒够几天了」，产出是**写文件**，一句话都不说。
+ *
+ * 放一起会让两条判定纠缠，也容易写着写着就变成「整理完了顺便告诉他一声」——
+ * 那正是 D049 否掉的东西。
+ */
+function startDream() {
+  dreamer = dream.create({
+    chat: async ({ temperature, messages }) => {
+      const cfg = store.read()
+      if (!cfg.apiKey || !String(cfg.apiKey).trim()) throw new Error('还没有 API Key')
+      return llm.chat({
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        temperature,
+        messages
+      })
+    },
+    // 他正在等一句话，别在这时候抢网络
+    isBusy: () => busy,
+    log: (m) => console.log('[dream] ' + m)
+  })
+  dreamer.start()
 }
 
 /* ------------------------------------------------------------------ */
@@ -519,7 +551,10 @@ if (!singleLock) {
     createWindow()
     buildTray()
     // 截图模式只活几秒，调度器一起来就会多一句不该出现的对话
-    if (!process.env.HUNDUN_SHOT) startScheduler()
+    if (!process.env.HUNDUN_SHOT) {
+      startScheduler()
+      startDream()
+    }
     search
       .info()
       .then((info) => console.log('[search] 索引就绪：' + (info.count || 0) + ' 条'))
@@ -539,5 +574,6 @@ if (!singleLock) {
   app.on('before-quit', () => {
     app.isQuitting = true
     if (scheduler) scheduler.stop()
+    if (dreamer) dreamer.stop()
   })
 }

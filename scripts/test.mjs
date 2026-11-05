@@ -1369,6 +1369,135 @@ console.log('\n[3j] 用户档案：写要求，覆盖不追加')
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
+/* ---------------- 3k. 记忆折叠（P1） ---------------- */
+console.log('\n[3k] 记忆折叠：攒够几天才折，失败不推进')
+
+{
+  const dream = require(path.join(ROOT, 'src/main/dream.js'))
+  const { plan, digest, pick } = dream
+
+  // --- 挑哪几天（纯函数，把「今天是哪天」捏死） ---
+  const NOW = new Date('2026-11-10T10:00:00')
+  ok(plan(['2026-11-08'], null, NOW) === null, '只有一天不折，挑不出持久的')
+
+  const three = plan(['2026-11-01', '2026-11-02', '2026-11-03'], null, NOW)
+  ok(three && three.days.length === 3, '攒够三天就折')
+  ok(three.from === '2026-11-01' && three.to === '2026-11-03', '折的区间是首尾两天')
+
+  ok(plan(['2026-11-08', '2026-11-09'], null, NOW) === null, '今天和昨天不折（它们本来就在上下文里）')
+
+  const after = plan(['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'], '2026-11-02', NOW)
+  ok(after === null, '上次折到 11-02，之后只剩两天，不够数就先不动')
+
+  const many = plan(
+    Array.from({ length: 20 }, (_, i) => '2026-10-' + String(i + 1).padStart(2, '0')),
+    null,
+    NOW
+  )
+  ok(many.days.length === dream.LIMITS.MAX_DAYS, '一次最多折七天，不一口气嚼三个月')
+  ok(many.pending > many.days.length, '剩下的记在 pending 里，下次接着来')
+
+  // --- 材料 ---
+  const dg = digest([{ day: '2026-11-01', text: 'x'.repeat(200) }], 50)
+  ok(dg.truncated, '材料太长会截断')
+  ok(dg.text.length < 120, '截断后确实短了')
+
+  // --- 解析 ---
+  ok(
+    JSON.stringify(pick('好的\n<longterm>\n- 他在做馄饨Agent\n</longterm>\n说完了')) ===
+      JSON.stringify(['他在做馄饨Agent']),
+    '只取 <longterm> 里的内容，正文一个字不要'
+  )
+  ok(pick('这几天没什么值得留的').length === 0, '没有块就是没有，不瞎猜')
+
+  // --- 全链路 ---
+  const dr = path.join(TMP, 'dream')
+  fs.rmSync(dr, { recursive: true, force: true })
+  const prev = process.env.HUNDUN_LIFE_DIR
+  process.env.HUNDUN_LIFE_DIR = dr
+  life.ensureLife()
+
+  for (const day of ['2026-11-01', '2026-11-02', '2026-11-03']) {
+    fs.writeFileSync(
+      path.join(life.lifeDir(), 'memory', day + '.md'),
+      '# ' + day + '\n\n### 记录\n- 他在做馄饨Agent，卡在调度器\n- 今天很累\n',
+      'utf8'
+    )
+  }
+
+  let asked = 0
+  let lastPrompt = ''
+  const d1 = dream.create({
+    chat: async ({ messages }) => {
+      asked++
+      lastPrompt = messages[messages.length - 1].content
+      return { text: '<longterm>\n- 他在做馄饨Agent，长期在做\n</longterm>' }
+    },
+    now: () => new Date('2026-11-05T10:00:00'),
+    log: () => {}
+  })
+
+  const r1 = await d1.run(true)
+  ok(r1.items.length === 1, '折出 1 条')
+  ok(life.readSafe('MEMORY.md', 99999).includes('馄饨Agent'), '提炼的东西进了 MEMORY.md')
+  ok(dream.readState().lastDay === '2026-11-03', '进度推到这批的最后一天')
+  ok(lastPrompt.includes('=== 2026-11-01 ==='), '喂进去的材料按天分段')
+  ok(lastPrompt.includes('已有记忆'), '带着已有记忆，让它别重复')
+  ok(lastPrompt.includes('不要挑') && lastPrompt.includes('当天的情绪'), '提示词里写死了「情绪不算记忆」')
+  ok(!('text' in r1), '折叠的结果里没有一句话 —— 它不会借机开口')
+
+  const r2 = await d1.run(true)
+  ok(r2.skipped === 'not-enough', '刚折完不会马上再折一遍')
+  ok(asked === 1, '第二次没有白调一次模型')
+
+  // 空回复：推进，但不写
+  const dr2 = path.join(TMP, 'dream-empty')
+  fs.rmSync(dr2, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = dr2
+  life.ensureLife()
+  for (const day of ['2026-11-04', '2026-11-05', '2026-11-06']) {
+    fs.writeFileSync(path.join(life.lifeDir(), 'memory', day + '.md'), '- 今天很累\n', 'utf8')
+  }
+  const d2 = dream.create({
+    chat: async () => ({ text: '   ' }),
+    now: () => new Date('2026-11-08T10:00:00'),
+    log: () => {}
+  })
+  const r3 = await d2.run(true)
+  ok(r3.empty === true, '模型一个字不说，当作「没有值得留的」')
+  ok(dream.readState().lastDay === '2026-11-06', '这种情况也要推进 —— 否则这一天成了路障，后面全堵着')
+
+  // 抛错：不推进
+  const dr3 = path.join(TMP, 'dream-err')
+  fs.rmSync(dr3, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = dr3
+  life.ensureLife()
+  for (const day of ['2026-11-01', '2026-11-02', '2026-11-03']) {
+    fs.writeFileSync(path.join(life.lifeDir(), 'memory', day + '.md'), '- 有内容\n', 'utf8')
+  }
+  const d3 = dream.create({
+    chat: async () => {
+      throw new Error('net::ERR_INVALID_ARGUMENT')
+    },
+    now: () => new Date('2026-11-05T10:00:00'),
+    log: () => {}
+  })
+  const r4 = await d3.run(true)
+  ok(/ERR_INVALID_ARGUMENT/.test(r4.error || ''), '调用失败会记下来')
+  ok(!dream.readState().lastDay, '失败不推进进度，下次重来（不写半截）')
+
+  // 他正在等一句话时不抢网络
+  const d4 = dream.create({
+    chat: async () => ({ text: '<longterm>\n- x\n</longterm>' }),
+    isBusy: () => true,
+    now: () => new Date('2026-11-05T10:00:00')
+  })
+  ok((await d4.run()).skipped === 'chatting', '有对话在生成时不插队')
+  ok((await d4.run(true)).items, '强制跑时不受影响（测试和手动触发用）')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
 console.log('\n[4] 界面：SSR 渲染')
 
 const vuePlugin = {

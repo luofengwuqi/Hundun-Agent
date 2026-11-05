@@ -589,6 +589,19 @@ function listChatDays() {
   }
 }
 
+/** 有哪些日期的日记。给记忆折叠用（P1）。 */
+function listJournalDays() {
+  try {
+    return fs
+      .readdirSync(memoryDir())
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+      .map((f) => f.slice(0, 10))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* 约定 COMMITMENTS.md（P-08／D061）                                    */
 /* ------------------------------------------------------------------ */
@@ -1156,6 +1169,7 @@ module.exports = {
   appendChat,
   chatPath,
   listChatDays,
+  listJournalDays,
   listCommitments,
   readCommitment,
   addCommitment,
