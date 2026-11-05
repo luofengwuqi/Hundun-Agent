@@ -303,7 +303,10 @@ function registerIpc() {
   ipcMain.handle('cfg:test', async (_e, patch) => {
     const cfg = { ...store.read(), ...(patch || {}) }
     try {
-      const reply = await llm.testConnection(cfg)
+      // 只测这一个。store.read() 里带着 modelChain（整条备用链），眼下它不叫 chain
+      // 所以不会被动用 —— 但这层安全靠的是字段名不同，太脆。显式清空：
+      // 否则某天它改名叫 chain，这里就会测成「链上第一个能通」，而界面显示「这一张通了」。
+      const reply = await llm.testConnection({ ...cfg, chain: [] })
       return { ok: true, reply }
     } catch (e) {
       return { ok: false, error: e.message }

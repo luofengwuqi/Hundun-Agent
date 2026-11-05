@@ -868,6 +868,11 @@ const ch2 = llm.chainOf({ chain: store.read().modelChain })
 ok(ch2.length === 3, 'llm 拿到的是整条链')
 ok(ch2[0].model === 'big' && ch2[0].label === 'Big', '模型 id 用真名，显示用 name')
 ok(ch2[1].baseUrl === 'https://b.example/v1', '第二个用的是自己的地址')
+// 单卡测试靠这条：显式给空链时退化成「就测这一个」，不会顺着备用往下走
+ok(
+  llm.chainOf({ chain: [], baseUrl: 'https://x/v1', model: 'only-one' }).length === 1,
+  '显式给空链时只测一个模型'
+)
 
 const fakeChain = [
   { model: 'big', label: 'Big' },
