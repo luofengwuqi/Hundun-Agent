@@ -2088,6 +2088,16 @@ console.log('\n[3p] 写入回执：说「记住了」不算，块落到盘上才
   )
   ok(memgate.looksLikeGreeting('嗨'), '纯招呼认出来了')
   ok(!memgate.looksLikeGreeting('我叫芜柒，写代码的'), '一句正经回答不算招呼')
+  // D102 真机事故：length>12 被当成招呼拦掉，「又见面了…我是芜柒」19 字，
+  // 称呼永远进不了档案。长度不是判据，正则才是。
+  ok(!memgate.looksLikeGreeting('又见面了 不知道这是第几次了 我是芜柒'), '带称呼的长消息不算招呼（length 判据已废）')
+  ok(!memgate.looksLikeGreeting('晚上十二点就倒下了 下午干活'), '一句平常的话不算招呼')
+  // 抽取提示词：主题不许硬套示例（「你是最重要的」被记成 [称呼] 的教训）
+  {
+    const mg = memgate.buildPrompt({ userText: 'x', assistantText: 'y' })[0].content
+    ok(mg.includes('不许把内容硬套进示例里的主题'), '抽取规矩：主题按内容起，不硬套')
+    ok(mg.includes('别硬进 <profile>'), '抽取规矩：情绪话不进 profile')
+  }
 
   /* ---- 结构校验：不过就整批不要 ---- */
 
