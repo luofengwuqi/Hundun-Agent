@@ -212,6 +212,16 @@ async function runChain(chain, attempt, onFallback) {
       if (i > 0 && typeof onFallback === 'function') {
         onFallback({ used: one, failed: failed.slice() })
       }
+      if (i > 0) {
+        // 只推界面事件不留痕，回头查「这句话为什么是这个腔调」就没有依据。
+        // 落一行到主进程日志（启动器把它重定向到 ~/.cache/hundun-agent/latest.log）。
+        console.warn(
+          '[fallback] 前面的模型都失败了，这轮用的是',
+          one.label || one.model,
+          '失败记录:',
+          failed.map((f) => `${f.model}(${f.error})`).join('; ')
+        )
+      }
       return out
     } catch (e) {
       if (started) throw e
