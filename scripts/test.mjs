@@ -2408,6 +2408,15 @@ console.log('\n[3s] 初始化应用：删目录重种，回到出厂（D100 开�
   }
 }
 
+/* [3u] 话题调度：新输入优先、旧线作废（D101，对齐 openclaw steering） */
+console.log('\n[3u] 话题调度：新输入优先，旧线作废')
+{
+  const sp = life.buildSystemPrompt()
+  ok(sp.includes('答的就是你最近问的那件事'), '回答锚定最近的问题这条在提示词里')
+  ok(sp.includes('另一条就地作废'), '未被接住的旧线头作废这条在提示词里')
+  ok(sp.includes('你这不像在答我'), '点名禁止「套框架校验」这个具体行为')
+}
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
 process.exit(fail === 0 ? 0 : 1)
