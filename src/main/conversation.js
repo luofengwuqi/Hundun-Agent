@@ -272,7 +272,9 @@ async function recall(text) {
     const today = life.dateStr()
     const yesterday = life.dateStr(new Date(Date.now() - 86400000))
     const hits = await search.search(text, 8)
-    return hits.filter((h) => h.day !== today && h.day !== yesterday).slice(0, 3)
+    // 只排除今天（今天的原话都在 history 里，再捞一遍是重复）。
+    // 昨天不排除：昨天的日记常常是空的，昨天说过的话只能从 chat 记录里捞回来（D096）。
+    return hits.filter((h) => h.day !== today).slice(0, 3)
   } catch {
     return []
   }

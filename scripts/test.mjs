@@ -1243,6 +1243,21 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
     iRitual - iPending > 0 && iRitual - iPending < 4200,
     '命令和它的文件之间隔着 AGENTS/SOUL/IDENTITY/USER —— 与 openclaw 的 CONTEXT_FILE_ORDER 一致'
   )
+
+  // D096：关于他的条目单独成段，放在 Project Context **之前**
+  // —— openclaw 的 USER.md 是「session 开始时单独加载、独立小预算」，不跟别的文件挤在一起。
+  {
+    const iHim = bsFirst.indexOf('## 他（你手上关于他的全部）')
+    const iRun = bsFirst.indexOf('## Runtime Context')
+    ok(iHim > iRun, '「他」那节在 Runtime Context 之后')
+    ok(iHim > 0 && iHim < iCtx, '「他」那节在 Project Context 之前（注意力更强的一端）')
+    ok(bsFirst.includes('还什么都不知道'), '新档案时明说「还什么都不知道」，不是空着一片')
+    // 全新目录的日记是空模板，不该被当成「有记录」注进去
+    ok(!bsFirst.includes('## ' + life.dateStr()), '空日记不注入（只有 frontmatter 和标题）')
+    ok(bsFirst.includes('日记是空的'), '没有日记时明说一句，免得它以为被截断')
+    ok(bsFirst.includes('扫一眼开头那节「他」'), '输出规则最后一段要求先扫一遍关于他的信息')
+    ok(bsFirst.includes('不能整轮一句都没沾到'), '用不用都行，但整轮不许一句都没沾到记忆')
+  }
   ok(
     bsFirst.indexOf('## AGENTS.md（这个窗口是干什么的）') <
       bsFirst.indexOf('## SOUL.md（你是谁、怎么说话）'),

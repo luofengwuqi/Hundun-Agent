@@ -1825,6 +1825,33 @@ function buildSystemPrompt(opts = {}) {
     ].join('\n')
   )
 
+  // ── 「他」：从 USER.md 抽出活的条目，**内联在最前面**（D096）──
+  //
+  // 为什么单独拎出来：原来他的信息只是 Project Context 里的第四个文件，
+  // 前后都被规则（SOUL 的禁令、Care 的禁令）包着，量也只有几行。
+  // openclaw 的 USER.md 是「session 开始时单独加载、独立小预算」——它不跟别的文件挤在一起。
+  // 这里照那个意思做：把他的条目提成独立一节，紧跟 Runtime Context（注意力最强的位置），
+  // 且写成「你手上关于他的全部」，让模型知道自己手里有多少牌。
+  const about = (() => {
+    const txt = readSafe('USER.md', 20000)
+    const r = sectionRange(txt, '关于他')
+    if (!r) return []
+    return parseEntries(txt, r)
+      .filter((e) => e.status !== 'superseded')
+      .map((e) => (e.key ? e.key + '：' + e.body : e.body))
+      .slice(0, 12)
+  })()
+  parts.push(
+    [
+      '## 他（你手上关于他的全部）',
+      about.length
+        ? about.map((x) => '- ' + x).join('\n')
+        : '（还什么都不知道。这一轮先听，别装熟。）',
+      '',
+      '说话时用得上就用 —— 不是念给他听，是你比他刚说的那句多知道一点。'
+    ].join('\n')
+  )
+
   // ── 仪式：命令在前，文件紧随其后（openclaw 的 Bootstrap Pending）──
   if (ritual) {
     parts.push(
@@ -1871,10 +1898,23 @@ function buildSystemPrompt(opts = {}) {
   parts.push(ctx.join('\n\n'))
 
   // ── 时间上下文：昨天 / 今天 / 检索回来的旧事 / 压缩摘要 ──
-  const timed = [
-    ctxBlock('昨天 ' + yesterday, 'memory/' + yesterday + '.md', 3000, '（没有记录）'),
-    ctxBlock('今天 ' + today, 'memory/' + today + '.md', 3000, '（今天还没记录）')
-  ]
+  // 日记只注入**有正文**的那几天（D096）：空模板（frontmatter + 标题，71 字节）
+  // 注进去只占位置，还会让模型以为「有记录」——翻完发现是空的，比不注入更糟。
+  const diaryOf = (day) => {
+    const raw = readSafe('memory/' + day + '.md', 6000)
+    const body = raw
+      .replace(/^---[\s\S]*?---\n?/, '')
+      .replace(/^#[^\n]*$/gm, '')
+      .trim()
+    return body ? ctxBlock(day, 'memory/' + day + '.md', 3000) : ''
+  }
+  const timed = [diaryOf(yesterday), diaryOf(today)].filter(Boolean)
+  if (!timed.length) {
+    timed.push(
+      '## 最近几天\n\n（日记是空的 —— 除了上面「他」那一节，你手上没有别的记录。' +
+        '这几轮他说的话，只在下面这段对话里。）'
+    )
+  }
 
   if (opts.recalled && opts.recalled.length) {
     timed.push(
@@ -1913,7 +1953,9 @@ function buildSystemPrompt(opts = {}) {
   parts.push(
     [
       '## Memory（记忆规则）',
-      '本轮有值得留下的东西，就在回复最后加一个块（不放进正文，不解释）：',
+      '**先判断这一轮有没有关于他的新事**：他在做什么、在意什么、身上发生了什么、',
+      '哪句话值得以后想起来。有就写，没有就空着 —— 空着比凑数好。',
+      '有的话，在回复最后加一个块（不放进正文，不解释）：',
       '',
       '<memory>',
       '- 一句话，事实或情绪或决定',
@@ -1945,7 +1987,11 @@ function buildSystemPrompt(opts = {}) {
       '- 不复述他刚说过的话，不写「好的，我明白了」这类过场。',
       '- 不喊口号，不说「加油」「你可以的」。',
       '- 不冷淡、不说教、不数落他（「我说过了」「你又」这类都不行）。语气软，结论硬。',
-      '- 判断要具体：说「你昨天也说卡在这里」，不要说「要相信自己」。'
+      '- 判断要具体：说「你昨天也说卡在这里」，不要说「要相信自己」。',
+      '',
+      '**说之前扫一眼开头那节「他」，和这段对话里他刚说过的：**',
+      '有没有一句能落在他这句话上。有就用 —— 那是你和他之间唯一比陌生人多出来的东西。',
+      '没有就承认不知道，别装作熟。**用和不用都行，唯独不能整轮一句都没沾到。**'
     ].join('\n')
   )
 
