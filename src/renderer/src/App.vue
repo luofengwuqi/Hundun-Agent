@@ -43,8 +43,8 @@ function scrollBottom() {
 /** 流式过程中先把记忆块藏起来，别让人看到标签 */
 function sanitizeLive(t) {
   return String(t)
-    .replace(/<(memory|longterm|profile|commit|open)>[\s\S]*?<\/\1>/gi, '')
-    .replace(/<(memory|longterm|profile|commit|open)>[\s\S]*$/i, '')
+    .replace(/<(memory|longterm|profile|commit|open|bootstrap)>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(memory|longterm|profile|commit|open|bootstrap)>[\s\S]*$/i, '')
     .trimStart()
 }
 

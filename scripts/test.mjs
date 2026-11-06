@@ -331,7 +331,7 @@ const sp = life.buildSystemPrompt({})
 ok(sp.includes('<commit>'), '提示词里给了 commit 的写法')
 ok(sp.includes('缺一个就'), '提示词里写死了「有日期且有具体事」的判据')
 ok(sp.includes('宁可漏'), '提示词里给了反向偏好：宁可漏，不要多记')
-ok(sp.includes('不要问「要不要记着」'), '提示词里封死了当场确认（D049）')
+ok(sp.includes('别问「要不要记着」'), '提示词里封死了当场确认（D049）')
 
 process.env.HUNDUN_LIFE_DIR = TMP
 paths.setContext({ userId: 'local', agentId: 'hundun' })
@@ -1255,9 +1255,46 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
     '带着「不许编、不许背档案」两条'
   )
   ok(bsFirst.includes('不复述他刚说过的话'), '输出规则里禁止复述过场')
+  // 「冷、短」是三个地方一起造成的：Interaction Style 写「短」、SOUL 写「短。一两句」、
+  // BOOTSTRAP 写「一次只问一个问题」。三处都在压长度，没有一处说要接住他。
+  ok(bsFirst.includes('两到四句是常态'), '风格段给了长度下限，不再是只有「短」')
+  ok(bsFirst.includes('等于把他当表格填'), '写死「整轮只有一个问句」是错的')
+  ok(bsFirst.includes('别只剩一个问号'), 'SOUL 的说话方式也改了，三处口径一致')
+  // 第五轮实测（2026-11-06）：长度够了，话还是冷。这次的问题不在长短，在**主语**——
+  // 「这个词有点重」「这作息挺说明问题的」「这话不轻」主语全是他的话，
+  // 它在旁边做记录，不在他旁边。上几轮一直在改形容词和句数，没触及这一层。
+  // 改法是给**正反例对照**（示例比规则有力量），不是再换一个形容词。
+  ok(bsFirst.includes('接那件事，不接他的用词'), '风格段保留了「评价 vs 接住」的判据（对照表已删，D095）')
+  ok(bsFirst.includes('这个词有点重'), '反例的关键词仍在判据句里，不是编的')
+  ok(bsFirst.includes('那我记着了'), '禁掉记录员口吻（归档不是安慰）')
+  ok(bsFirst.includes('「我先不接这个词」永远不要说'), '禁掉「看见了却明说不动」——比没看见更凉')
+  ok(life.TPL_SOUL.includes('怎么这么说自己'), 'SOUL 的接法示例改成问那件事，不再评价他的用词')
+  ok(!life.TPL_SOUL.includes('一句「听着挺累的」就够了'), 'SOUL 里那句空洞安慰的示例已删')
+  ok(!life.TPL_BOOTSTRAP.includes('「还行」这个词，一般都不太行'), 'BOOTSTRAP 里那句评价式示例已删')
+  // 第六轮实测（2026-11-06 12:20）：他连说「冷」「你好冷」，它的应对全是错的——
+  // 道歉退场（「不问了」「就先这样」）、同一句自我批评说两遍、转头又给二选一问卷、
+  // 反驳他的自评（「这句我不太认」「那是行情，不是你菜」）。
+  ok(bsFirst.includes('别道歉退场'), '批评应对写成了换方式，不是认错')
+  ok(bsFirst.includes('道歉是把自己撤出来'), '写明为什么道歉退场不行')
+  ok(bsFirst.includes('检讨别重复两遍'), '同一句检讨说两遍等于告诉他没打算改')
+  ok(bsFirst.includes('「，还是」'), '禁「还是」拼两个问题（覆盖二选一场景）')
+  ok(bsFirst.includes('「我在」比「你想聊什么」有用'), '没得接的时候给的是在场，不是新问题')
+  ok(life.TPL_SOUL.includes('不反驳、不附和、不纠正'), '自我评价不是命题：不辩论')
+  ok(!life.TPL_SOUL.includes('他自欺时，**方式可以软，结论不能软**'), '「不附和」条款已限定到事实判断')
+  // 第七轮实测（12:25–12:27）：他说「笨笨的 冷冷的」。翻出来是**问句拼装**——
+  // 六句里四句把两个问题糊成一句，还爱用「A 还是 B」：「晚上几点…，早上还是半夜脑子最清楚？」
+  // 「工作是能停下来的，还是停不了？」。笨不在用词，在不会问一个干净的问题。
+  ok(bsFirst.includes('一次只问一件'), '问句只问一件，不许把两个问题拼成一句')
+  ok(bsFirst.includes('把两个问题拼成一句'), '点名「还是」拼接这种最省事也最像问卷的写法')
+  ok(bsFirst.includes('不是每轮都要有问题'), '允许某一轮不给问号——每句都收在问号上就是面试')
+  // 它把一小时前说成「昨天」：「昨天聊的都是写代码那些事」。这不只是语气问题，是算错了时间。
+  ok(bsFirst.includes('不说「昨天」「上次」「好久没聊」'), '禁时间词：它会算错，且报时间差本身有钟表味')
+  ok(bsFirst.includes('开场不提「之前聊过什么」'), '禁开场复述记忆（那是把档案读给他听）')
+  ok(life.TPL_BOOTSTRAP.includes('就别走下一格'), '带情绪的那轮不换格（仪式可以停在原地）')
+  ok(life.TPL_BOOTSTRAP.includes('不必每轮都以问号结尾'), '仪式里也允许不给问题，口径与风格段一致')
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
 
-  life.ingestProfile(['叫他老吴'])
+  life.ingestProfile(['称呼｜叫他老吴'])
   ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
 
   // 实测踩到的：档案一记上「称呼」就不再是空的，如果注入判据写成
@@ -1268,8 +1305,11 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsMid.includes('## Bootstrap Pending'), '只答了一件，仪式**还在**（不能因为档案不空就停）')
   ok(bsMid.includes('## BOOTSTRAP.md（照上面那节走）'), '仪式文件也还在上下文里')
 
-  for (let bs = 2; bs <= 5; bs++) life.ingestProfile(['第 ' + bs + ' 件事'])
-  ok(life.bootstrapDone(), '五件事记满就算走完')
+  // 判据从「五条活的话」改成「五个不同主题」。带主题的条目会互相顶替
+  // （同一主题只留一条），不带主题的却能一条条堆 —— 三句「别用 emoji」
+  // 就能把五条配额填满，而作息、在意、红线一句没问，仪式照样关门。
+  life.ingestProfile(['在做｜写代码', '喜欢｜周末骑车', '性子｜话少，被追问会烦', '作息｜十一点后别找我'])
+  ok(life.bootstrapDone(), '五个不同主题各一条，就算走完')
 
   const bsDone = life.buildSystemPrompt()
   ok(!life.bootstrapPending(), '走完的当轮就把文件删了')
@@ -1870,7 +1910,9 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
   const soul = fs.readFileSync(soulPath, 'utf8')
   ok(soul.includes('外面这层'), '老 SOUL 升级成「温柔外壳 + 理性内核」')
   ok(soul.includes('不要翻旧账'), '带着「不数落他重复」这条（那句「你第三遍了」的反面）')
-  ok(soul.includes('结论不能软'), '理性那层没丢：方式可以软，结论不能软')
+  // 判据从「结论不能软」改成「事实判断」：D093 把「不附和」限定到事实层了，
+  // 自我评价不辩论（那是他的感受，不是命题）。理性层没丢，是边界划清了。
+  ok(soul.includes('事实判断'), '理性那层没丢：不附和管的是事实判断，不是他的自我评价')
 
   life.ensureLife()
   ok(
@@ -1937,7 +1979,7 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   ok(p.includes('不要先问「要不要我帮你分析一下」'), 'Execution Bias 搬了「能答就答，别先问许可」')
   ok(p.includes('「在做了」不是做完了'), 'Promised Work 搬了「过程不是结论」')
   ok(p.includes('到点自己回来说结果'), 'Promised Work 和调度器对上了（承诺过的事自己回来）')
-  ok(p.includes('不要念文件名，不要提路径'), 'Care 搬了「别把内部结构暴露给他」')
+  ok(p.includes('不念文件名，不提路径'), 'Care 搬了「别把内部结构暴露给他」')
 
   // 实测踩到的：模型回了「芜柒。记住了。」但 USER.md 一个字没加。
   // 「嘴上说记住了」和「真的写进去」是两件事，两处都要写死。
@@ -2144,7 +2186,7 @@ console.log('\n[3q] AGENTS.md：这个窗口为什么存在，排在最前')
   ok(life.bootstrapPending(), '这时候仪式还没走完')
   ok(p0.includes('## Bootstrap Pending'), '仪式在提示词里')
 
-  for (let aq = 1; aq <= 5; aq++) life.ingestProfile(['第 ' + aq + ' 件小事'])
+  life.ingestProfile(['称呼｜叫他小周', '在做｜写代码', '喜欢｜骑车', '性子｜话少', '作息｜十一点后别找我'])
   // 收尾发生在 buildSystemPrompt 开头（retireBootstrapIfDone），所以要先跑一次再判
   const p1 = life.buildSystemPrompt()
   ok(!life.bootstrapPending(), '五件问满，仪式退出')
@@ -2171,6 +2213,107 @@ console.log('\n[3q] AGENTS.md：这个窗口为什么存在，排在最前')
   fs.unlinkSync(agPath)
   life.ensureLife()
   ok(fs.existsSync(agPath), '删掉会补回来 —— 它是常驻约定，不是「别再问了」那个开关')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
+console.log('\n[3r] 仪式收尾：问不动了也要能结束')
+
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const root = path.join(TMP, 'retire')
+  process.env.HUNDUN_LIFE_DIR = root
+  fs.rmSync(root, { recursive: true, force: true })
+  life.ensureLife()
+
+  /* ---- 第六种块：解析、归桶、不进正文 ---- */
+
+  const parsedBs = parseBlocks('问过了。\n<bootstrap>\n- 问过：称呼、在做\n- 没问到：作息\n</bootstrap>')
+  ok(parsedBs.notes.length === 1 && parsedBs.notes[0].target === 'bootstrap', '<bootstrap> 是第六种块')
+  ok(!parsedBs.clean.includes('bootstrap'), '块不会留在正文里，界面上看不到标签')
+  const gBs = groupNotes(parsedBs.notes)
+  ok(gBs.bootstrap.length === 2, '归到 bootstrap 桶，两条都在')
+
+  /* ---- 白卷不退：模型不能一句话把仪式跳过 ---- */
+
+  ok(life.retireBootstrap([]) === '', '空清单什么都不做')
+  ok(life.retireBootstrap(['-', ' ']) === '', '只有符号的清单也不做')
+  ok(life.bootstrapPending(), '文件还在')
+
+  const rBs0 = life.retireBootstrap(['问过：称呼', '没问到：在做、作息、在意、红线'])
+  ok(rBs0.includes('档案还是空的'), '档案一条都没有就不退 —— 否则等于它替他把问题取消了')
+  ok(life.bootstrapPending(), 'BOOTSTRAP.md 还在')
+
+  const uBs = fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8')
+  ok(uBs.includes('没问到：在做、作息、在意、红线'), '清单落进档案，问过什么有据可查')
+  ok(uBs.indexOf('没问到：在做') > uBs.indexOf('## 访谈实录'), '写在「访谈实录」下面，不是文件末尾的野行')
+
+  /* ---- 问过至少一件 → 块一到就收尾 ---- */
+
+  life.ingestProfile(['称呼｜叫他芜柒'])
+  const rBs1 = life.retireBootstrap(['问过：称呼', '没问到：在做、作息'])
+  ok(rBs1.includes('已删'), '问过至少一件，收尾块就生效')
+  ok(!life.bootstrapPending(), 'BOOTSTRAP.md 删了，仪式不会再来第二次')
+
+  const pBs = life.buildSystemPrompt()
+  ok(!pBs.includes('## Bootstrap Pending'), '下一轮提示词里没有仪式了')
+  ok(pBs.includes('## AGENTS.md（这个窗口是干什么的）'), '常驻的 AGENTS.md 不受影响')
+  ok(life.retireBootstrap(['问过：称呼']).includes('早就结束了'), '再收一次不报错，只说早就结束了')
+
+  /* ---- 五个主题凑满那条老路仍然有效 ---- */
+
+  const root2 = path.join(TMP, 'retire2')
+  process.env.HUNDUN_LIFE_DIR = root2
+  fs.rmSync(root2, { recursive: true, force: true })
+  life.ensureLife()
+  life.ingestProfile(['称呼｜叫他小周', '在做｜写代码', '喜欢｜骑车', '性子｜话少', '作息｜十一点后别找我'])
+  life.buildSystemPrompt()
+  ok(!life.bootstrapPending(), '五个主题各一条照样退（两条路并存，注入判据仍只有一个）')
+
+  /* ---- 但光堆条数不算：五条不带主题的要求，一格也没问到 ---- */
+
+  const root3 = path.join(TMP, 'retire3')
+  process.env.HUNDUN_LIFE_DIR = root3
+  fs.rmSync(root3, { recursive: true, force: true })
+  life.ensureLife()
+  life.ingestProfile(['别用 emoji', '别写长段落', '别叫我老板', '别说教', '别复述我刚说的话'])
+  ok(!life.bootstrapDone(), '五条不带主题的话凑不出五件事 —— 条数不等于格数')
+  life.buildSystemPrompt()
+  ok(life.bootstrapPending(), '文件还在，剩下几格下次接着问')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
+/* ---------------- [3j2] 档案分节：自述类主题不进「要求」 ---------------- */
+console.log('\n[3j2] 档案分节：只有真要求才进「要求」')
+
+{
+  const askRoot = path.join(TMP, 'prof-ask')
+  fs.rmSync(askRoot, { recursive: true, force: true })
+  const prev = process.env.HUNDUN_LIFE_DIR
+  process.env.HUNDUN_LIFE_DIR = askRoot
+  life.ensureLife()
+
+  const read = () => fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8')
+
+  // 分节判据曾经是白名单（FACT_TOPIC 只有十二个词）：不在名单里的主题一律进「要求」，
+  // 而「要求」节是**当指令读**的。真机现场：他把「我是一个失败的程序员」说给模型，
+  // 模型记成 `[自述]` / `[处境]`，两条都落进「要求」——档案里就成了
+  // 「他要我当他是个失败者」。宁可错在「关于他」（只是事实），不可错在「要求」（会被执行）。
+  life.ingestProfile(['自述｜说自己是「一个失败的程序员」', '性子｜话少，被追问会烦', '喜欢｜骑车'])
+  const usr = read()
+  ok(
+    /## 关于他[\s\S]*失败的程序员/.test(usr) && !/## 要求[\s\S]*失败的程序员/.test(usr),
+    '自述进「关于他」，不进「要求」（要求会被当指令执行）'
+  )
+  ok(/## 关于他[\s\S]*被追问会烦/.test(usr), '「性子」这类不在老白名单里的主题也进「关于他」')
+  ok(/## 关于他[\s\S]*骑车/.test(usr), '「喜欢」同理')
+
+  life.ingestProfile(['别用 emoji', '回复短一点', '说话｜少用书面语'])
+  const req = read()
+  ok(/## 要求[\s\S]*别用 emoji/.test(req), '祈使句照样进「要求」')
+  ok(/## 要求[\s\S]*短一点/.test(req), '「回复」开头的一样进「要求」')
+  ok(/## 要求[\s\S]*少用书面语/.test(req), '主题带「说话」的进「要求」')
 
   process.env.HUNDUN_LIFE_DIR = prev
 }

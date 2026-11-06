@@ -184,6 +184,21 @@ function persistNotes(notes, opts = {}) {
     }
   }
 
+  // 仪式收尾（D089）。它是第六种块，但不是记忆 —— 是「我实在问不动了」这句话。
+  //
+  // 为什么需要它：完成判据是「档案里五条活的话」，而仪式允许他答「不知道」、
+  // 也允许他不想聊就停。两条并排，仪式可能永远结束不了，于是他每次打开
+  // 都被从「怎么称呼你」重问一遍。**判据不可达，和不一致一样坏。**
+  // 判断「问不动了」归模型，删文件归这里 —— 与 D086 的分工一致。
+  if (bucket.bootstrap.length) {
+    try {
+      const r = life.retireBootstrap(bucket.bootstrap)
+      if (r) written.push(r)
+    } catch (e) {
+      written.push('仪式收尾失败: ' + e.message)
+    }
+  }
+
   if (written.length) search.rebuild().catch(() => {})
   return written
 }
