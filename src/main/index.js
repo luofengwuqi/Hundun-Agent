@@ -503,6 +503,28 @@ function registerIpc() {
 
   ipcMain.handle('identity:current', () => identity.current())
   ipcMain.handle('identity:switch', (_e, next) => identity.switchTo(next || {}))
+  // 开发者菜单（D100）：初始化应用。删除动作在主进程做，而且必须先过系统弹窗
+  // ——渲染层按钮会误触，弹窗不会；「取消」是默认键。
+  ipcMain.handle('dev:reset', () => {
+    const r = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      title: '初始化应用',
+      message: '清空全部内容，回到第一次见面的状态？',
+      detail:
+        '会删掉这个身份目录里的全部东西：档案、记忆、日记、对话、约定。' +
+        '删完不能找回。模型配置、打扰设置不受影响。',
+      buttons: ['取消', '清空并重置'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+    if (r !== 1) return { done: false }
+    life.resetLife()
+    // init 不做「相同身份就跳过」的判断，正好：目录刚删，必须走完整的
+    // 建目录→种模板→清会话→重建索引。onSwitch 会把 identity:changed 推给界面。
+    identity.init()
+    return { done: true }
+  })
 
   ipcMain.handle('quiet:get', () => store.isQuietToday())
   ipcMain.handle('quiet:toggle', () => {

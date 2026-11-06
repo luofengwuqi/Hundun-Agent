@@ -2358,6 +2358,42 @@ console.log('\n[3j2] 档案分节：只有真要求才进「要求」')
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
+console.log('\n[3s] 初始化应用：删目录重种，回到出厂（D100 开发者菜单）')
+
+{
+  const rlPrev = process.env.HUNDUN_LIFE_DIR
+  const rlRoot = path.join(TMP, 'reset-new')
+  fs.rmSync(rlRoot, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = rlRoot
+  life.ensureLife()
+
+  // 先弄脏：写日记、写档案、删仪式（模拟走完仪式后聊了好几天）
+  life.appendDiary('白天写代码，晚上十二点睡')
+  life.ingestProfile(['自述｜写 Java 的'])
+  fs.rmSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'), { force: true })
+  ok(!life.bootstrapPending(), '弄脏后：仪式已结束、日记和档案有内容')
+
+  life.resetLife()
+  ok(life.bootstrapPending(), 'resetLife 后仪式重新出现（.bootstrap 标记跟着目录一起没了）')
+  ok(
+    !fs.readFileSync(path.join(life.lifeDir(), 'USER.md'), 'utf8').includes('写 Java 的'),
+    '档案回到空模板'
+  )
+  ok(
+    !fs.existsSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md')) ||
+      !fs
+        .readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+        .includes('白天写代码'),
+    '日记回到空模板'
+  )
+  ok(fs.existsSync(path.join(life.lifeDir(), 'AGENTS.md')), '种子文件全部重种（AGENTS.md 在）')
+  // 幂等：连按两下不炸
+  life.resetLife()
+  ok(life.bootstrapPending(), '连按两次也是同一个出厂态')
+
+  process.env.HUNDUN_LIFE_DIR = rlPrev
+}
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
 process.exit(fail === 0 ? 0 : 1)

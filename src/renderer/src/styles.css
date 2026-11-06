@@ -900,10 +900,35 @@ textarea::placeholder {
   border-color: var(--line);
 }
 
+/* 开发者：初始化按钮。危险动作不用虚线框，实心+警示色，别和「添加」长一个样 */
+.q-danger {
+  border: 1px solid #b3563e;
+  background: none;
+  color: #b3563e;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.q-danger:hover {
+  background: rgba(179, 86, 62, 0.08);
+  border-color: #9a4430;
+  color: #9a4430;
+}
+.q-danger[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+.q-danger[disabled]:hover {
+  background: none;
+  color: #b3563e;
+}
+
 /* 时段：一行一段，起止两个时间输入 + 删除 */
 .q-time {
-  display: flex;
-  align-items: center;
+  display: flex;  align-items: center;
   gap: 8px;
   margin-top: 10px;
   padding: 6px 8px;

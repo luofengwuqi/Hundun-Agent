@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld('hundun', {
     onChanged: (cb) => ipcRenderer.on('identity:changed', (_e, d) => cb(d))
   },
 
+  // 开发者菜单（D100）。初始化的确认在主进程的系统弹窗里，这里只管发起。
+  dev: {
+    reset: () => ipcRenderer.invoke('dev:reset')
+  },
+
   quiet: {
     get: () => ipcRenderer.invoke('quiet:get'),
     toggle: () => ipcRenderer.invoke('quiet:toggle'),

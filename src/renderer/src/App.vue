@@ -247,6 +247,32 @@ async function saveCfg(patch) {
   return r
 }
 
+/** 开发者菜单：初始化应用（D100）。确认在主进程的系统弹窗里，取消了就是 done:false */
+const devResetting = ref(false)
+
+async function devReset() {
+  if (devResetting.value) return
+  devResetting.value = true
+  try {
+    const res = await window.hundun.dev.reset()
+    if (res && res.done) {
+      // 主进程已删目录并 identity.init()（清会话、重建索引）。界面这边把
+      // 对话清空、重演开场——仪式回来了，第一句话还是它先说。
+      messages.value = []
+      liveIdx.value = -1
+      notice.value = '已经回到初始状态。'
+      noticeBad.value = false
+      view.value = 'chat'
+      opening()
+    }
+  } catch (e) {
+    notice.value = String((e && e.message) || e)
+    noticeBad.value = true
+  } finally {
+    devResetting.value = false
+  }
+}
+
 /** 设置页应用了模型配置：拿新配置回来，hasApiKey／派生值都变了 */
 function onCfgSaved(next) {
   if (!next) return
@@ -427,6 +453,22 @@ onBeforeUnmount(() => {
           </svg>
           <span>设置</span>
         </button>
+        <button class="rail-item" :class="{ on: view === 'dev' }" @click="view = 'dev'" title="开发者">
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13.5 6l-3 12" />
+          </svg>
+          <span>开发者</span>
+        </button>
       </nav>
 
       <section v-show="view === 'chat'" class="chat-col">
@@ -569,6 +611,30 @@ onBeforeUnmount(() => {
             约定在对话里定，<b>它自己记，不会问你「要不要记着」</b>。记错了你当场说一句，它删掉，不辩解。<br />
             问到就结案：办成了、没办成、没去，都算结束，不会追着问第二次。
           </p>
+        </div>
+      </section>
+
+      <!-- 开发者（D100）：测试用，和「打扰」「设置」并列。危险操作只有初始化一项 -->
+      <section v-show="view === 'dev'" class="quiet-col">
+        <div class="q-head">
+          <span class="q-title">开发者</span>
+        </div>
+
+        <p class="q-lede">
+          测试用的东西放这里。这里没有日常该碰的开关。
+        </p>
+
+        <div class="q-group">
+          <div class="q-row">
+            <div class="q-main-text">
+              <span class="q-label">初始化应用</span>
+              <p class="q-note">删掉这个身份的全部内容：档案、记忆、日记、对话、约定，回到第一次见面的仪式。删完不能找回。</p>
+            </div>
+            <button class="q-danger" :disabled="devResetting" @click="devReset">
+              {{ devResetting ? '清空中…' : '清空并重置' }}
+            </button>
+          </div>
+          <p class="q-note">模型配置、打扰设置不受影响。点下去会先弹一次系统确认。</p>
         </div>
       </section>
 

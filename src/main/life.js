@@ -635,6 +635,25 @@ function ensureLife() {
 }
 
 /**
+ * 回到出厂（开发者菜单，D100）：删掉整个身份目录，立刻按当前模板重新种。
+ *
+ * 「初始化」不是清空 session 就完事——仪式、档案、日记、对话、索引、
+ * dream 进度全在这一个目录里，删目录是唯一能把「一辈子只种一次」的
+ * 开关（.bootstrap）一起清掉的办法。删完马上 ensureLife：
+ *   - 全部种子重种（当前模板，不是某个历史版本）
+ *   - .bootstrap 没了 → seedBootstrapOnce 走「档案是空的 → 种仪式」那条路
+ *   - 界面侧由调用方（dev:reset）随后 identity.init() 复位会话与索引
+ */
+function resetLife() {
+  const dir = lifeDir()
+  if (path.basename(dir) !== 'hundun' || !dir.includes('agents')) {
+    throw new Error('重置目标不对，拒绝删除：' + dir)
+  }
+  fs.rmSync(dir, { recursive: true, force: true })
+  ensureLife()
+}
+
+/**
  * 第一次见面的仪式，**一辈子只种一次**（D078 的补丁）。
  *
  * 原来的判据只有「目录是新建的」，于是 D078 之前建好的老目录永远拿不到仪式：
@@ -2040,6 +2059,7 @@ function buildSystemPrompt(opts = {}) {
 
 module.exports = {
   ensureLife,
+  resetLife,
   ensureJournal,
   readSafe,
   writeSafe,
