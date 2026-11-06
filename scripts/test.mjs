@@ -2394,6 +2394,20 @@ console.log('\n[3s] 初始化应用：删目录重种，回到出厂（D100 开�
   process.env.HUNDUN_LIFE_DIR = rlPrev
 }
 
+/* [3t] 示例占位：模板和抽取提示词里不许有真名化的示例答案（D085 第三次踩后的加固） */
+{
+  // 真机事故：他叫芜柒，示例占位是「叫他小周」——抽取模型照抄示例，同主题顶替
+  // 让假名字成了 active。占位必须是「〈名字〉」这种一眼假的模板形式。
+  const memgate = require(path.join(ROOT, 'src/main/memgate.js'))
+  const bs = life.TPL_BOOTSTRAP
+  const mg = memgate.buildPrompt({ userText: 'x', assistantText: 'y' })[0].content
+  for (const [where, txt] of [['仪式模板', bs], ['抽取提示词', mg]]) {
+    ok(!txt.includes('小周'), where + '里不再出现示例真名「小周」')
+    ok(txt.includes('〈名字〉'), where + '的称呼示例是尖括号占位形式')
+    ok(txt.includes('照抄') || txt.includes('不要照抄') || txt.includes('别照抄') || txt.includes('照抄进档案'), where + '里明说不要照抄')
+  }
+}
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
 process.exit(fail === 0 ? 0 : 1)
