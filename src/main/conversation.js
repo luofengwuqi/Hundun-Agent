@@ -7,7 +7,7 @@ const llm = require('./llm')
 const search = require('./search')
 const session = require('./session')
 const memgate = require('./memgate')
-const { parseBlocks, groupNotes, diagnose } = require('./blocks')
+const { parseBlocks, groupNotes, diagnose, BLOCK_RE } = require('./blocks')
 
 /**
  * 会话引擎。
@@ -368,9 +368,13 @@ async function send(text, hooks = {}) {
     const recalled = hooks.internal ? [] : await recall(text)
     if (session.isStale(myEpoch)) return { dropped: true, text: '' }
 
+    // 块是写入协议，不是对话内容：他界面上看不到，喂回模型的历史里也要剥掉。
+    // 不剥的话，模型看到的「自己上一轮」结尾是 </profile> ——「看上一轮怎么收尾」
+    // 这类判据就被块标签遮住了（真机问卷感的一个来源）。memgate 判定用原始文本，不受影响。
+    const clean = (c) => String(c || '').replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim()
     const messages = [
       { role: 'system', content: life.buildSystemPrompt({ summary, recalled }) },
-      ...history.slice(-48)
+      ...history.slice(-48).map((m) => ({ role: m.role, content: m.role === 'assistant' ? clean(m.content) : m.content }))
     ]
     if (hooks.internal) messages.push({ role: 'user', content: text })
 
