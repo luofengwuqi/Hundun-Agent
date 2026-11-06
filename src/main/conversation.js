@@ -356,6 +356,11 @@ async function send(text, hooks = {}) {
       // 原话落盘（P-07／D028）：只写不读，永远不进上下文，只供回查和检索。
       // internal 的指令不是他说的话，所以这里也不写「你」那一行。
       life.appendChat('user', text)
+      // 他的原话同时进当天日记（D097）：chat 只写不读，日记才是会被注入回去的那份。
+      // 机械兜底 —— 模型不写块，这条通道不能也等它。
+      try {
+        life.appendDiary(text)
+      } catch {}
       search.rebuild().catch(() => {})
     }
 

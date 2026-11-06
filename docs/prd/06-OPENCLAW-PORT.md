@@ -28,6 +28,7 @@ hundunAgent 是 **Electron 单进程**：主进程就是全部后端，索引已
 | 注入文件有上限、截断处有提示 | `concepts/context.md` | `readSafe(rel, max)` | 更早 |
 | 注入内容的顺序固定（性格→身份→用户→长期→今日→检索） | 同上 | `buildSystemPrompt` | 更早 |
 | 记忆维护：日记定期折叠进长期记忆（只搬目的，不搬三阶段） | `concepts/dreaming.md` | `src/main/dream.js` + `startDream()` | D080 |
+| 日常通道兜底：模型没工具写不了文件时，transcript 由 host 机械摄入（不调模型，snippet 12–280 字）——照它的形状补 daily notes | `extensions/memory-core/src/session-ingestion.ts` + `flush-plan.ts`（压缩前 flush 同构已在） | `life.appendDiary` + `conversation.send` 挂钩 | D097 |
 | 人格分两层，语气层要正面写「温暖」并给情绪时机 | `agents/gpt5-prompt-overlay.ts`（`Interaction Style`）、`concepts/soul.md` | `TPL_SOUL` 的「外面这层／里面这层」 | D083／D084 |
 | 行为合同（不许编、不许背档案、情绪先接住）写进代码，不放用户可改的文件 | `agents/system-prompt.ts` 的 **Care** 段 | `buildSystemPrompt` 的 `## Care` | D085 |
 | 写入要有回执：说了记却没写，代码补一趟抽取；补不成降级 append-only | `concepts/memory-architecture.md` 三条原则（Writing is the hard part／Fixed checks／structure validation + append-only fallback） | `src/main/memgate.js`、`conversation.repairIfNeeded` | D086 |

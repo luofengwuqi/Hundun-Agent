@@ -974,6 +974,44 @@ function appendChat(role, text) {
   return 'chat/' + today + '.md'
 }
 
+/**
+ * 把他的原话追加进当天日记（D097）。
+ *
+ * openclaw 的 daily notes 有内容，是因为它的模型有文件工具随时写、压缩前还有 flush 兜底；
+ * 我们的模型没有工具，也从不主动写块（真机十几轮零写入），所以这条通道由**代码机械兜底**：
+ * 不判断、不提取、一个字的加工都不做，只保证「他今天说过的话」落进 daily notes ——
+ * 提示词注入（今天＋昨天自动加载）、召回（memory/ 进索引）、dreaming（攒几天折进
+ * MEMORY.md）这三条下游才有东西可捞。判据归代码：只收他真实说的话。
+ */
+function appendDiary(text) {
+  const body = String(text == null ? '' : text).replace(/\r\n/g, '\n').trim()
+  if (!body) return null
+  if (body.length < 4) return null // 「嗯」「好」这类应答不值得占一行
+  // 多行压成一行，上限对齐 openclaw 的 snippet 上限（280）
+  const one = body.split('\n').map((l) => l.trim()).filter(Boolean).join(' ').slice(0, 280)
+  const today = dateStr()
+  const abs = path.join(lifeDir(), 'memory', today + '.md')
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  if (!fs.existsSync(abs)) {
+    const d = new Date(today + 'T12:00:00')
+    fs.writeFileSync(
+      abs,
+      '---\ndate: ' + today + '\nenergy:\nplan: 0\ndone: 0\n---\n\n# ' + today + ' ' + weekday(d) + '\n\n',
+      'utf8'
+    )
+  }
+  const prev = fs.readFileSync(abs, 'utf8')
+  // 幂等：同一句（去标点空格后全等）今天已经记过就不再追加 —— 召回回环、history 重放都挡在这
+  const seen = prev
+    .split('\n')
+    .map((l) => l.replace(/^-\s+\d{2}:\d{2}\s+/, '').trim())
+    .filter(Boolean)
+  if (seen.some((l) => sameDeal(l, one))) return null
+  const line = '- ' + timeStr() + ' ' + one
+  fs.appendFileSync(abs, line + '\n', 'utf8')
+  return line
+}
+
 function listChatDays() {
   const dir = path.join(lifeDir(), 'chat')
   try {
@@ -1900,15 +1938,15 @@ function buildSystemPrompt(opts = {}) {
   // ── 时间上下文：昨天 / 今天 / 检索回来的旧事 / 压缩摘要 ──
   // 日记只注入**有正文**的那几天（D096）：空模板（frontmatter + 标题，71 字节）
   // 注进去只占位置，还会让模型以为「有记录」——翻完发现是空的，比不注入更糟。
-  const diaryOf = (day) => {
+  const diaryOf = (day, label) => {
     const raw = readSafe('memory/' + day + '.md', 6000)
     const body = raw
       .replace(/^---[\s\S]*?---\n?/, '')
       .replace(/^#[^\n]*$/gm, '')
       .trim()
-    return body ? ctxBlock(day, 'memory/' + day + '.md', 3000) : ''
+    return body ? ctxBlock(label + ' ' + day, 'memory/' + day + '.md', 3000) : ''
   }
-  const timed = [diaryOf(yesterday), diaryOf(today)].filter(Boolean)
+  const timed = [diaryOf(yesterday, '昨天'), diaryOf(today, '今天')].filter(Boolean)
   if (!timed.length) {
     timed.push(
       '## 最近几天\n\n（日记是空的 —— 除了上面「他」那一节，你手上没有别的记录。' +
@@ -2009,6 +2047,7 @@ module.exports = {
   ingestProfile,
   alike,
   appendChat,
+  appendDiary,
   chatPath,
   listChatDays,
   listJournalDays,

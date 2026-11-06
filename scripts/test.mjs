@@ -1258,6 +1258,31 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
     ok(bsFirst.includes('扫一眼开头那节「他」'), '输出规则最后一段要求先扫一遍关于他的信息')
     ok(bsFirst.includes('不能整轮一句都没沾到'), '用不用都行，但整轮不许一句都没沾到记忆')
   }
+
+  // D097：日记机械兜底。openclaw 的 daily notes 有内容靠「模型有工具随时写」，
+  // 我们的模型没有工具也不写块（真机十几轮零写入），所以由代码把他的原话落进日记。
+  {
+    const before = fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+    life.appendDiary('晚上十二点就倒下了 下午干活')
+    const after = fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+    ok(after.includes('晚上十二点就倒下了'), '他的原话进当天日记')
+    ok(!before.includes('晚上十二点就倒下了'), '之前日记确实是空的（这个测试目录才建的）')
+
+    life.appendDiary('晚上十二点就倒下了 下午干活')
+    const dup = fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
+    ok((dup.match(/晚上十二点就倒下了/g) || []).length === 1, '同一句当天只记一份（召回回环挡在这）')
+
+    const short = life.appendDiary('嗯')
+    ok(short === null, '四字以内的应答不记')
+    const long = life.appendDiary('第一行的话\n第二行的话')
+    ok(long && long.includes('第一行的话') && long.includes('第二行的话'), '多行压成一行')
+    ok(!life.appendDiary(''), '空串不记')
+
+    // 注入：日记有正文之后，提示词里应该能看到（标题带「今天/昨天」前缀）
+    const p2 = life.buildSystemPrompt()
+    ok(p2.includes('今天 ' + life.dateStr()), '日记注入段带着「今天/昨天」前缀（D096 修掉过丢前缀的回归）')
+    ok(p2.includes('晚上十二点就倒下了'), '日记正文出现在提示词里 —— 它这一轮就知道他刚说过什么')
+  }
   ok(
     bsFirst.indexOf('## AGENTS.md（这个窗口是干什么的）') <
       bsFirst.indexOf('## SOUL.md（你是谁、怎么说话）'),
