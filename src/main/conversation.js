@@ -371,10 +371,10 @@ async function send(text, hooks = {}) {
     // 块是写入协议，不是对话内容：他界面上看不到，喂回模型的历史里也要剥掉。
     // 不剥的话，模型看到的「自己上一轮」结尾是 </profile> ——「看上一轮怎么收尾」
     // 这类判据就被块标签遮住了（真机问卷感的一个来源）。memgate 判定用原始文本，不受影响。
-    const clean = (c) => String(c || '').replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+    const stripBlocks = (c) => String(c || '').replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim()
     const messages = [
       { role: 'system', content: life.buildSystemPrompt({ summary, recalled }) },
-      ...history.slice(-48).map((m) => ({ role: m.role, content: m.role === 'assistant' ? clean(m.content) : m.content }))
+      ...history.slice(-48).map((m) => ({ role: m.role, content: m.role === 'assistant' ? stripBlocks(m.content) : m.content }))
     ]
     if (hooks.internal) messages.push({ role: 'user', content: text })
 
