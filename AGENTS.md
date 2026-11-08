@@ -120,6 +120,7 @@
 | `models.resolve(cfg)` 吃**整个配置对象** | 传错 → 派生永远失败 → 界面一直「配置坏了」，不崩不报 | `src/main/models.js` |
 | `llm.post()` 绝不手设 `Content-Length` | net 走 Chromium 的上传模型自己算长度，手设会 `net::ERR_INVALID_ARGUMENT`、3ms 内失败——**长得像网络问题**，判据是「失败快得离谱 + 换直连不变」 | `src/main/llm.js` |
 | 写 Markdown 表格前先去掉文件尾部空行 | 文件以换行结尾，`split('\n')` 末项是空串，直接 `push` 会在分隔行后留空行，表格就断了 | `life.js`、`schedule.js` |
+| **`MEMORY.md` 的写入口和注入方向必须同向** | 写入口一度把新条目插在 `## 进行中的事` 之前（文件往上挤），注入又只读开头 8000 字符，于是超预算时被切掉的正是**最新的记录和后面那两节**——不报错、不崩，表现成「它怎么老提些过时的事」（D106）。改任一边都要重算另一边 | `life.appendLongterm`／`memForPrompt` |
 | **注入判据必须等于完成判据** | 一次性流程（首次见面仪式）如果注入和判定用两个条件，就会出现「答完第一问仪式整个消失」（D087，真实故障，同一个错犯了两次） | `life.bootstrapPending()` 一个开关管两头 |
 | **文件类热更新，代码类必须重启** | `SOUL.md`／`BOOTSTRAP.md`／`AGENTS.md`／`USER.md` 每轮重读，直接写进身份目录就生效；`Interaction Style`／`Care` 这些在 `src/main/life.js` 里，跑的是 `out/main/index.js`——**改了源码不重启等于没改**。验证提示词效果前先问一句「这条在文件里还是在代码里」（D094 踩过） | `conversation.buildSystemPrompt` 每轮调用，但 `require` 过的模块不会重载 |
 | **改完提示词要清 `.session.json` 再看效果** | `history` 是 `conversation.js` 的模块内变量，只在启动时读一次文件；里面若已有八条旧腔的对话，模型会顺着写下去，新规则压不过眼前惯性（D093）。**「还是冷」有两个可能：规则没改对／history 在拖，症状一模一样** | `<身份目录>/.session.json`，删了要重启 |
@@ -131,10 +132,12 @@
 
 ```bash
 npm run build                                  # 只构建
-env -u NODE_OPTIONS node scripts/test.mjs      # 515 项，必须全过
+env -u NODE_OPTIONS node scripts/test.mjs      # 610 项
 npm run check                                  # 构建 + 测试 + 产物检查
 npm run dev                                    # 构建 + 起窗口（沙箱里起不来，得他本人跑）
 ```
+
+**Windows 上有三项固定失败，是环境不是代码**（2026-11-08 复核，改动前后都失败）：`0600 权限` 判出 666、`App.vue` 渲染报 ESM loader 不认 `e:` 盘符、SQL 语义验证找不到 `/usr/bin/python3`。**这三项不要试图修**，先确认其余全过；换到 Linux 上应该自己回去。
 
 **`env -u NODE_OPTIONS` 不是可选的**：环境注入的 `node-safe-delete-shim` 会拦住 `test.mjs` 里的 `fs.rmSync`，报一长串栈。`npm run build` 不受影响。
 

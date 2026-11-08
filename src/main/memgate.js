@@ -142,7 +142,7 @@ function buildPrompt({ userText, assistantText, profileText }) {
     '块有五种，这一趟通常只用 profile 和 memory：',
     '<profile> 关于他本人的事实，或他对你怎么说话的要求 </profile>',
     '<memory> 今天发生在他身上的事 </memory>',
-    '<longterm> 值得长期留住的判断 </longterm>',
+    '<longterm> 值得长期留住的判断，写成 `主题｜内容` </longterm>',
     '<commit> 他答应要做的事｜日期 </commit>',
     '<open> 没说完、下次该接上的话 </open>'
   ].join('\n')

@@ -361,7 +361,10 @@ ok(journal.includes('测试：今天卡在登录页'), '日记内容已落盘')
 life.appendLongterm(['连续三天周三下午效率低'])
 const mem = fs.readFileSync(path.join(LIFE, 'MEMORY.md'), 'utf8')
 ok(mem.includes('连续三天周三下午效率低'), '长期记忆已落盘')
-ok(mem.indexOf('连续三天') < mem.indexOf('## 进行中的事'), '长期记忆插在锚点之前，结构没被破坏')
+// D106：原来插在「## 进行中的事」之前，文件于是往上挤，
+// 超预算时被截掉的正好是最新的事。改成追加到末尾，顺着时间往下长。
+ok(mem.trimEnd().endsWith('连续三天周三下午效率低'), '长期记忆追加在文件末尾，不是插在锚点前')
+ok(mem.indexOf('## 进行中的事') < mem.indexOf('连续三天'), '结构节还在前面，没被后面的记录穿过')
 
 life.ingestProfile(['职业｜做后端，主要写 Java'])
 const usr = fs.readFileSync(path.join(LIFE, 'USER.md'), 'utf8')
@@ -1522,6 +1525,14 @@ console.log('\n[3k] 记忆折叠：攒够几天才折，失败不推进')
     '只取 <longterm> 里的内容，正文一个字不要'
   )
   ok(pick('这几天没什么值得留的').length === 0, '没有块就是没有，不瞎猜')
+  // prompt 里写着「最多 6 条」，原来代码里根本没兜（LIMITS.MAX_ITEMS 是 undefined，
+  // slice(0, undefined) 等于不截断），一次折叠塞多少条全看模型心情。
+  ok(
+    pick('<longterm>\n' + Array.from({ length: 9 }, (_, i) => '- 第' + i + '条').join('\n') + '\n</longterm>')
+      .length === dream.LIMITS.MAX_ITEMS,
+    '最多几条由代码兜住，不是 prompt 里的一句请求',
+    String(dream.LIMITS.MAX_ITEMS)
+  )
 
   // --- 全链路 ---
   const dr = path.join(TMP, 'dream')
@@ -2425,6 +2436,77 @@ console.log('\n[3u] 话题调度：新输入优先，旧线作废')
   ok(sp.includes('答的就是你最近问的那件事'), '回答锚定最近的问题这条在提示词里')
   ok(sp.includes('就地作废'), '未被接住的旧线头作废这条在提示词里（D103 压缩版）')
   ok(sp.includes('旧线就地作废') && sp.includes('不套框架校验'), '点名禁止「套框架校验」（D103 压缩版保留判据）')
+}
+
+/* [3v] 长期记忆的覆盖与溢出、检索门槛、同一段对话不抖（D106／D107） */
+console.log('\n[3v] 长期记忆覆盖与溢出 / 检索门槛 / 召回不抖')
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const MTMP = path.join(ROOT, '.dev/test-memory')
+  fs.rmSync(MTMP, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = MTMP
+  life.ensureLife()
+
+  const memFile = path.join(life.lifeDir(), 'MEMORY.md')
+  const readMem = () => fs.readFileSync(memFile, 'utf8')
+
+  // ① 同主题覆盖：新的顶掉旧的，旧的留痕不删
+  life.appendLongterm(['在学的东西｜在学嵌入式'])
+  life.appendLongterm(['在学的东西｜转去写后端了'])
+  const covered = readMem()
+  ok(covered.includes('在学嵌入式'), '被顶掉的那条留在文件里（能看到他是怎么变的）')
+  ok(/在学嵌入式（已过时 \d{2}-\d{2}）/.test(covered), '被顶掉的那条标了「已过时」和日期')
+  ok(covered.includes('转去写后端了'), '新的一条写进去了')
+  const pCover = life.buildSystemPrompt()
+  ok(pCover.includes('转去写后端了'), '注入的是当前有效的那条')
+  ok(!pCover.includes('在学嵌入式'), '已过时的不进上下文 —— 两条并存时模型会挑旧的答')
+
+  // ② 换了主题就不许覆盖上一条
+  life.appendLongterm(['作息｜凌晨一点睡'])
+  const twoKeys = readMem()
+  ok(twoKeys.includes('转去写后端了') && !/转去写后端了（已过时/.test(twoKeys), '不同主题互不顶替')
+
+  // ③ 溢出：结构节不能被记录挤掉，最新的必须留下，丢了多少天要说出来
+  const filler = '这一天的记录比较长，用来把文件撑过预算。'.repeat(12)
+  let big = '# MEMORY.md — 长期记忆\n\n## 关于你（事实）\n（暂无）\n\n## 进行中的事\n（暂无）\n\n## 你划过的红线\n（暂无）\n\n'
+  for (let i = 1; i <= 40; i++) {
+    big += '### 2026-01-' + String(i).padStart(2, '0') + '\n- 第' + i + '天：' + filler + '\n\n'
+  }
+  fs.writeFileSync(memFile, big, 'utf8')
+  const pFull = life.buildSystemPrompt()
+  ok(pFull.includes('## 你划过的红线'), '超预算时结构节还在（原来会被日期块挤到最后、一起截掉）')
+  ok(pFull.includes('第40天'), '最新的那条在上下文里（原来是保头弃尾，切掉的正是最新的）')
+  ok(!pFull.includes('第1天：'), '最老的那条让出去了')
+  ok(/更早有 \d+ 天的记录没放进来/.test(pFull), '少给了几天要明说，不能悄悄少给')
+
+  // ④ 检索门槛：一个词撞上不算命中
+  const search2 = require(path.join(ROOT, 'src/main/search.js'))
+  const st = search2.tokenize('我们现在觉得')
+  ok(!st.includes('现在') && !st.includes('觉得'), '停用词不进查询词', st.join('/'))
+  ok(!search2.tokenize('debug the login flow').includes('the'), '英文停用词也挡掉')
+
+  fs.writeFileSync(
+    path.join(life.lifeDir(), 'memory', '2026-02-01.md'),
+    '# 2026-02-01\n\n- 明天要交周报\n- 那天卡在登录页，token 过期\n',
+    'utf8'
+  )
+  await search2.rebuild()
+  const weak = await search2.search('周报的事先放一放')
+  ok(weak.length === 0, '只有一个词撞上就不算命中（否则会在不相干的话题里翻旧账）', JSON.stringify(weak.map((h) => h.text)))
+  const strong = await search2.search('登录页又挂了')
+  ok(strong.length >= 1, '真相关的话照样命中', JSON.stringify(strong.map((h) => h.text)))
+
+  // ⑤ 同一段对话里不换答案
+  const conversation2 = require(path.join(ROOT, 'src/main/conversation.js'))
+  conversation2.reset()
+  const rA = await conversation2.recall('登录页又挂了')
+  const rB = await conversation2.recall('登录页又挂了，还是那个错')
+  ok(rA.length >= 1 && JSON.stringify(rA) === JSON.stringify(rB), '同一个话题里沿用上一批（每轮重查会忽而记得忽而不记得）')
+  const rC = await conversation2.recall('量子色动力学')
+  ok(JSON.stringify(rC) !== JSON.stringify(rA), '换到不相干的话题才换一批')
+
+  process.env.HUNDUN_LIFE_DIR = prev
+  life.ensureLife()
 }
 
 /* ---------------- 汇总 ---------------- */

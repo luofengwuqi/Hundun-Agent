@@ -35,6 +35,8 @@ const SUMMARY_MAX = 12000
 let history = []
 let summary = ''
 let busy = false
+// 上一批放进 prompt 的旧事。只为看「话题换没换」，不是缓存搜索结果（D107）。
+let memoryQuilt = null
 
 function sessionFile() {
   return path.join(life.lifeDir(), SESSION_FILE)
@@ -107,6 +109,7 @@ function clearSessionFile() {
 function reset() {
   history = []
   summary = ''
+  memoryQuilt = null
   clearSessionFile()
 }
 
@@ -121,6 +124,7 @@ function resetSession() {
   history = []
   summary = ''
   busy = false
+  memoryQuilt = null
   session.bump()
   return loadSession()
 }
@@ -266,15 +270,28 @@ function repairIfNeeded({ userText, assistantText, notes, provenance, myEpoch })
 /**
  * 从旧日记里捞和这句话相关的记忆。
  * 昨天和今天的记录已经在 prompt 里了，不用重复捞。
+ *
+ * **同一段对话里不重查**（D107）。原来每轮都拿新话重查一次，话题稍微一偏，
+ * 翻出来的旧事就换一批 —— 他会觉得这东西忽而记得、忽而不记得，
+ * 而问题不在检索准不准，在它每句话都在换答案。
+ * 判据很便宜：上一批里还有一条对得上，就算同一个话题，沿用；一条都不剩才换。
+ * 代价是不追话题漂移，所以压缩之后要清一次（那里是真的换了语境）。
  */
 async function recall(text) {
   try {
     const today = life.dateStr()
-    const yesterday = life.dateStr(new Date(Date.now() - 86400000))
     const hits = await search.search(text, 8)
     // 只排除今天（今天的原话都在 history 里，再捞一遍是重复）。
     // 昨天不排除：昨天的日记常常是空的，昨天说过的话只能从 chat 记录里捞回来（D096）。
-    return hits.filter((h) => h.day !== today).slice(0, 3)
+    const fresh = hits.filter((h) => h.day !== today).slice(0, 3)
+    const keyOf = (h) => h.file + ':' + h.line
+
+    if (memoryQuilt && memoryQuilt.length) {
+      const same = fresh.some((f) => memoryQuilt.some((c) => keyOf(c) === keyOf(f)))
+      if (same) return memoryQuilt
+    }
+    memoryQuilt = fresh
+    return fresh
   } catch {
     return []
   }
@@ -327,6 +344,8 @@ async function maybeCompact(myEpoch) {
   summary = (summary ? summary + '\n' : '') + body
   const dropped = history.length - KEEP_AFTER_COMPACT
   history = history.slice(-KEEP_AFTER_COMPACT)
+  // 压缩之后语境真的换了：清掉上一批旧事，下一轮按新上下文重新找
+  memoryQuilt = null
   return { dropped, used, limit, summary: body }
 }
 
@@ -457,6 +476,7 @@ module.exports = {
   reset,
   resetSession,
   state,
+  recall,
   parseBlocks,
   persistNotes,
   repairIfNeeded,

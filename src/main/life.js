@@ -352,6 +352,9 @@ const TPL_MEMORY = `# MEMORY.md — 长期记忆
 
 ## 你划过的红线
 （暂无）
+
+## 按天的记录
+
 `
 
 const TPL_COMMITMENTS = `# COMMITMENTS.md — 约定
@@ -765,36 +768,192 @@ function appendJournal(lines) {
   return 'memory/' + today + '.md'
 }
 
-/** 长期记忆：追加到 MEMORY.md 的「进行中的事」之前，保持文件结构 */
+/**
+ * 把一行拆成「主题」和「正文」。`主题｜内容` 和 `[主题] 内容` 都认。
+ *
+ * 主题超过 12 个字就不当主题了 —— 那种长度不是主题，是半句话，
+ * 硬当主题会把两条本来无关的条目并成一条。
+ *
+ * USER.md 和 MEMORY.md 共用这一个，免得两处各写一份然后在某次改动里漂开。
+ */
+function splitTopic(line) {
+  const s = String(line == null ? '' : line)
+    .replace(/^[-*]\s*/, '')
+    .trim()
+  const bar = s.split(/\s*[｜|]\s*/)
+  if (bar.length > 1 && bar[0].length <= 12) {
+    return { key: bar[0].trim(), body: bar.slice(1).join('｜').trim() }
+  }
+  const br = s.match(/^\[([^\]]{1,12})\]\s*(.+)$/)
+  if (br) return { key: br[1].trim(), body: br[2].trim() }
+  return { key: '', body: s }
+}
+
+// 失效标记。**只在行尾追加，正文一个字不动** —— 要能看到他是怎么变过来的。
+const MEM_DEAD_RE = /（已过时\s*[^）]*）\s*$/
+
+/**
+ * 解析 MEMORY.md 里的条目行（`- MM-DD [主题] 正文`）。
+ *
+ * 只认条目行，标题、说明、他自己手写的段落一律不碰。返回的位置是给
+ * 「就地标失效」用的，所以每次改完文件都要重新解析一遍——标失效会让整行变长。
+ */
+function parseMemoryEntries(txt) {
+  const out = []
+  let at = 0
+  for (const line of String(txt || '').split('\n')) {
+    const from = at
+    at += line.length + 1
+    const m = line.match(/^-\s*(\d{2}-\d{2})\s+(.*)$/)
+    if (!m) continue
+    let rest = m[2]
+    const dead = MEM_DEAD_RE.test(rest)
+    if (dead) rest = rest.replace(MEM_DEAD_RE, '').trim()
+    const { key, body } = splitTopic(rest)
+    if (!body) continue
+    out.push({ stamp: m[1], key, body, dead, from, to: from + line.length })
+  }
+  return out
+}
+
+/**
+ * 长期记忆：追加到 MEMORY.md 末尾（D106）。
+ *
+ * 两处和原来不一样，修的是同一个坑的两半：
+ *
+ * **① 同主题覆盖，不是并列。** 原来只挡「一字不差」的行，于是「在学嵌入式」和
+ * 「转去写后端了」两条都留在文件里、都进上下文，模型可能挑旧的答。
+ * 现在带主题的（`主题｜内容`）走覆盖：旧的标「已过时」，不删。
+ *
+ * **② 写到文件末尾，不再插在「## 进行中的事」前面。**
+ * 插在中间会让文件往上挤——「进行中的事」「你划过的红线」这两节被一路推到后面，
+ * 而注入只读开头 8000 字符，于是最先看不见的正是最新的记录和这两节。
+ * 追加到末尾之后，文件是顺着时间往下长的，和注入时「保结构、保最新」的读法对得上。
+ */
 function appendLongterm(lines) {
   const p = path.join(lifeDir(), 'MEMORY.md')
   let txt = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : TPL_MEMORY
   const stamp = dateStr().slice(5)
+  const wrote = []
 
-  // 召回防回环（照 openclaw）：MEMORY.md 每一轮都在上下文里，
-  // 模型很容易把**读到的东西**当成**新发现的东西**再输出一遍。
-  // 不拦的话，同一个事实每聊一次加一行，一个月后这份文件全是重复，
-  // 而且真话被埋在复读里 —— 它自己也会开始照着这些复读答。
-  const seen = new Set(
-    txt
-      .split('\n')
-      .map((l) => l.replace(/^-\s*[0-9]{2}-[0-9]{2}\s*/, '').trim())
-      .filter(Boolean)
-  )
-  const fresh = (lines || [])
-    .map((l) => String(l).replace(/^[-*]\s*/, '').trim())
-    .filter((l) => l && !seen.has(l))
-  if (!fresh.length) return 'MEMORY.md'
+  for (const raw of (lines || []).slice(0, 8)) {
+    const { key, body } = splitTopic(raw)
+    if (!body) continue
+    // 每轮都重新解析：上一轮刚把某行标成「已过时」，后面所有行的位置都变了
+    const entries = parseMemoryEntries(txt)
 
-  const block = fresh.map((l) => '- ' + stamp + ' ' + l).join('\n')
-  const anchor = '## 进行中的事'
-  if (txt.includes(anchor)) {
-    txt = txt.replace(anchor, '### ' + dateStr() + '\n' + block + '\n\n' + anchor)
+    // 召回防回环（照 openclaw）：MEMORY.md 每一轮都在上下文里，
+    // 模型很容易把**读到的东西**当成**新发现的东西**再输出一遍。
+    // 一字不差判等必须严格，不能用相似度——带新细节的重述被当重复丢掉就补不回来了。
+    if (entries.some((e) => !e.dead && sameDeal(e.body, body))) continue
+    if (wrote.some((w) => sameDeal(w.body, body))) continue
+
+    // 同一主题，或意思够近 → 旧的就地标已过时
+    const twin = entries.find(
+      (e) => !e.dead && ((key && e.key && e.key === key) || alike(e.body, body) > 0.75)
+    )
+    if (twin) {
+      // 结尾用 twin.to 而不是 twin.from + 新长度：追加标记会让整行变长，
+      // 按新长度算会往后多吃掉几个字，而且吃掉的正是下一行的开头。
+      txt =
+        txt.slice(0, twin.from) +
+        txt.slice(twin.from, twin.to) +
+        '（已过时 ' + stamp + '）' +
+        txt.slice(twin.to)
+    }
+    wrote.push({ key, body })
+  }
+  if (!wrote.length) return 'MEMORY.md'
+
+  const block = wrote
+    .map((w) => '- ' + stamp + ' ' + (w.key ? '[' + w.key + '] ' : '') + w.body)
+    .join('\n')
+  // 末尾那段还是今天的块就接着写，否则另起一天。
+  // 判据是「最后一个日期标题」，不是「文件最后一行」——同一天写第二次时，
+  // 文件最后一行是上一条正文，按它判会每天多出一个 `### 今天`。
+  const heads = txt.match(/^###\s*\d{4}-\d{2}-\d{2}\s*$/gm) || []
+  const lastHead = heads.length ? heads[heads.length - 1].trim() : ''
+  const head = '### ' + dateStr()
+  if (lastHead === head) {
+    txt = txt.trimEnd() + '\n' + block + '\n'
   } else {
-    txt = txt.trimEnd() + '\n\n### ' + dateStr() + '\n' + block + '\n'
+    // 日期块单独收一节。不然 `### 2026-11-08` 会挂在「## 你划过的红线」底下，
+    // 看起来像那条红线的子项 —— 这个文件是他会用编辑器直接读的，不是只给机器看的。
+    const base = txt.trimEnd()
+    const withSection = /^##\s*按天的记录\s*$/m.test(base)
+      ? base
+      : base + '\n\n## 按天的记录'
+    txt = withSection + '\n\n' + head + '\n' + block + '\n'
   }
   fs.writeFileSync(p, txt, 'utf8')
   return 'MEMORY.md'
+}
+
+/**
+ * MEMORY.md 的注入形态（D106）。
+ *
+ * 和别的文件不一样，这里不用 `ctxBlock` 直接整份塞，因为两件事必须做：
+ *
+ *  - **「已过时」的行不进上下文。** 文件里留着（能看他怎么变的），
+ *    喂给模型的必须是当前有效的那份——这才是「冲突不共存」。
+ *  - **超预算时先保结构节，再按时间从新往旧取。** 原来读法是保头弃尾，
+ *    而这个文件是往下长的，被弃的正好是最新的事。
+ */
+function memForPrompt(max = 8000) {
+  const abs = resolveInside('MEMORY.md')
+  let raw = ''
+  let bytes = 0
+  try {
+    raw = fs.readFileSync(abs, 'utf8')
+    bytes = Buffer.byteLength(raw, 'utf8')
+  } catch {
+    return { text: '', cut: false, bytes: 0, droppedDays: 0 }
+  }
+
+  const struct = []
+  const days = []
+  let cur = null
+  for (const line of raw.split('\n')) {
+    if (/^##\s*按天的记录\s*$/.test(line)) {
+      // 这个标题只是文件的收纳格，不用喂给模型
+      cur = null
+      continue
+    }
+    const d = line.match(/^###\s*(\d{4}-\d{2}-\d{2})\s*$/)
+    if (d) {
+      cur = { day: d[1], lines: [line] }
+      days.push(cur)
+      continue
+    }
+    if (/^##\s/.test(line)) {
+      cur = null
+      struct.push(line)
+      continue
+    }
+    if (cur) cur.lines.push(line)
+    else struct.push(line)
+  }
+
+  const alive = (ls) => ls.filter((l) => !MEM_DEAD_RE.test(l))
+  const head = alive(struct).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+
+  const picked = []
+  for (let i = days.length - 1; i >= 0; i--) {
+    const block = alive(days[i].lines).join('\n').trim()
+    if (!block) continue
+    const joined = [head, block, ...picked].filter(Boolean).join('\n\n')
+    if (joined.length > max) break
+    picked.unshift(block)
+  }
+
+  let text = [head, ...picked].filter(Boolean).join('\n\n')
+  let cut = false
+  if (text.length > max) {
+    // 结构节自己就超了（手写了大段东西）：只能截，但必须说出来
+    text = text.slice(0, max) + '\n\n…（已截断，原文过长）'
+    cut = true
+  }
+  return { text, cut, bytes, droppedDays: days.length - picked.length }
 }
 
 /* ------------------------------------------------------------------ */
@@ -907,19 +1066,7 @@ function ingestProfile(lines) {
     if (!line) continue
 
     // `主题｜内容`、`[主题] 内容` 都认；都没有就当纯要求
-    let key = ''
-    let body = line
-    const bar = line.split(/\s*[｜|]\s*/)
-    if (bar.length > 1 && bar[0].length <= 12) {
-      key = bar[0].trim()
-      body = bar.slice(1).join('｜').trim()
-    } else {
-      const br = line.match(/^\[([^\]]{1,12})\]\s*(.+)$/)
-      if (br) {
-        key = br[1].trim()
-        body = br[2].trim()
-      }
-    }
+    const { key, body } = splitTopic(line)
     if (!body) continue
 
     const section = ASK_RE.test(body) || ASK_RE.test(key) ? '要求' : '关于他'
@@ -1801,6 +1948,27 @@ function ctxBlock(title, rel, max, fallback) {
 }
 
 /**
+ * MEMORY.md 那一节。和 ctxBlock 分开，因为它要过滤「已过时」的行、
+ * 并且在超预算时按「保结构、保最新」的顺序取舍（见 memForPrompt）。
+ */
+function memBlock(max) {
+  const f = memForPrompt(max)
+  const body = f.text || '（暂无）'
+  let note = ''
+  if (f.cut) {
+    note +=
+      '\n\n> 这个文件有 ' + f.bytes + ' 字节，上面只加载了开头 ' + max + ' 字符，后面的你看不到。' +
+      '看不到的部分就当不知道，不要补全，也不要假装记得。'
+  }
+  if (f.droppedDays) {
+    note +=
+      '\n\n> 更早有 ' + f.droppedDays + ' 天的记录没放进来（旧的在下边，超了预算）。' +
+      '那几天的原话还在日记里，真需要的时候说「我翻一下旧记录」再说，别凭印象补。'
+  }
+  return '## MEMORY.md（长期记忆）\n\n' + body + note
+}
+
+/**
  * 按 OpenClaw 的顺序拼 system prompt（对应 `src/agents/system-prompt.ts`）：
  *
  *   身份 → Interaction Style → Execution Bias → Promised Work
@@ -1967,7 +2135,7 @@ function buildSystemPrompt(opts = {}) {
   ctx.push(ctxBlock('IDENTITY.md', 'IDENTITY.md', 2000))
   ctx.push(ctxBlock('USER.md（关于他）', 'USER.md', 6000))
   if (ritual) ctx.push('## BOOTSTRAP.md（照上面那节走）\n\n' + ritual)
-  ctx.push(ctxBlock('MEMORY.md（长期记忆）', 'MEMORY.md', 8000))
+  ctx.push(memBlock(8000))
   if (rules) ctx.push(ctxBlock('RULES.md（他亲手写的规矩）', 'RULES.md', 4000))
   parts.push(ctx.join('\n\n'))
 
@@ -1994,7 +2162,8 @@ function buildSystemPrompt(opts = {}) {
     timed.push(
       '## 更早的相关记忆（按他这句话从旧日记里翻出来的）\n\n' +
         opts.recalled.map((h) => '[' + (h.day || h.file) + '] ' + h.text).join('\n') +
-        '\n\n这些是过去真实记下的原话，可以直接引用（说「你' + (opts.recalled[0].day || '那天') + '说过」），但不要罗列。'
+        '\n\n这些是过去记下的原话。**只有确实对得上他这句话才用**，对不上就当没看见 —— ' +
+        '为了证明自己记得而翻旧账，比忘了更糟。要用就说事，不要罗列，也不要报日期。'
     )
   }
 
@@ -2037,7 +2206,9 @@ function buildSystemPrompt(opts = {}) {
       '',
       '五种块按内容选一个，可以都不写：',
       '1. <memory> → 今天的日记。日常、当下的状态、零星的事。',
-      '2. <longterm> → MEMORY.md。持久的事实，或有证据的判断（判断必须能指到某天）。',
+      '2. <longterm> → MEMORY.md。一行 `主题｜内容`，主题两三个字（`在学的东西`、`作息`）。',
+      '   持久的事实，或有证据的判断（判断必须能指到某天）。同一件事改主意了就用同一个主题，',
+      '   旧的会自动标成过时 —— 不许并列两条相反的。',
       '3. <profile> → USER.md。一行 `主题｜内容`；**写成要求不写观察**（「回答保持简短」不是「他喜欢简短」），',
       '   事实如 `称呼｜叫他老吴`，要求如 `回答长度｜别超过三句`。同主题再说一次是改主意，改那一条。',
       '4. <commit> → 约定。一行 `什么事 | 到期日`，事要具体；日期确定写 YYYY-MM-DD，拿不准照他的原话（「下周三」），别自己换算。',
