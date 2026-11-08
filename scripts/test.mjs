@@ -11,7 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import esbuild from 'esbuild'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { createRequire } from 'node:module'
@@ -1333,6 +1333,24 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   // 它把一小时前说成「昨天」：「昨天聊的都是写代码那些事」。这不只是语气问题，是算错了时间。
   ok(bsFirst.includes('不说「昨天」「上次」「好久没聊」'), '禁时间词：它会算错，且报时间差本身有钟表味')
   ok(bsFirst.includes('开场不提「之前聊过什么」'), '禁开场复述记忆（那是把档案读给他听）')
+  // ---- D108：语气层压过输出层 ----
+  // 他的原话是「回答任何问题都过于理性」。前四轮都在加词（D083／D091／D093／D104），
+  // 这一次动的是**优先级**：语气层在最前，理性规则在最后，不动优先级靠后的永远赢。
+  ok(bsFirst.includes('这一节压过下面的行动和输出规则'), 'persona latch 在：语气层压过行动与输出规则（照 openclaw 的 <persona_latch>）')
+  ok(
+    bsFirst.includes('这一节压过下面的行动和输出规则') &&
+      bsFirst.indexOf('这一节压过下面的行动和输出规则') < bsFirst.indexOf('## Execution Bias'),
+    'latch 写在 Interaction Style 里、排在 Execution Bias 之前（写在后面就压不住）'
+  )
+  ok(!life.TPL_SOUL.includes('## 里面这层：理性'), 'SOUL 里不再有「理性层」这一节（判断力归执行层，不归人格文件）')
+  ok(life.TPL_SOUL.includes('这一轮只接住'), '新增「这一轮先做哪件」：累了就只接住')
+  ok(!life.TPL_SOUL.includes('判断要有据：说「你上周也提过一次」'), '「判断要有据」不再是无条件的（无条件＝他难受时也在举证）')
+  ok(bsFirst.includes('他要方向时才举证'), '举证加上条件：只有他要方向时（D108 对 D044 的落地修正）')
+  ok(!bsFirst.includes('判断要具体：说「你昨天也说卡在这里」'), '旧的无条件举证句已删（它在提示词最末，权重最高）')
+  ok(
+    life.buildSystemPrompt().indexOf('接住他') < life.buildSystemPrompt().indexOf('理清思路'),
+    '定位句里「接住」排在「理清思路」前面（三个任务不再并列）'
+  )
   ok(life.TPL_BOOTSTRAP.includes('就别走下一格'), '带情绪的那轮不换格（仪式可以停在原地）')
   ok(life.TPL_BOOTSTRAP.includes('不必每轮都以问号结尾'), '仪式里也允许不给问题，口径与风格段一致')
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
@@ -1813,6 +1831,40 @@ try {
   ok(false, 'App.vue 渲染失败', e.message)
 }
 
+/* ---------------- 4a. 等待态（D109） ---------------- */
+
+console.log('\n[4a] 等待态：它还没开口的时候不是一片空白')
+
+{
+  // live.js 是渲染层的纯函数，不依赖 Vue／Electron，可以直接 import。
+  // 路径要过 pathToFileURL：Windows 上 `e:` 这种盘符裸路径 ESM loader 不认。
+  const live = await import(pathToFileURL(path.join(ROOT, 'src/renderer/src/live.js')).href)
+
+  ok(live.isThinking({ live: true, content: '' }), '刚发出去、还没有字的时候算「在想」')
+  ok(live.isThinking({ live: true, content: ' \n\t ' }), '只有空白也算「在想」——空白和没有一样')
+  ok(!live.isThinking({ live: true, content: '嗯。' }), '第一个字到了就不再显示「在想」')
+  ok(
+    !live.isThinking({ live: false, content: '' }),
+    '已收尾的空消息不显示「在想」——那是要被删掉的，不是等待'
+  )
+  ok(!live.isThinking(null) && !live.isThinking(undefined), '没有这条消息时不抛错')
+
+  const think = live.liveHtml({ live: true, content: '' })
+  ok(think.includes('在想'), '等待态渲染出「在想」', think)
+  ok(think.includes('class="thinking"'), '等待态有专门的类名，样式挂得上', think)
+  ok(!think.includes('caret'), '等待态不挂光标——一根光标停在空行里更像卡死')
+
+  const first = live.liveHtml({ live: true, content: '我在。' })
+  ok(first.includes('我在。') && first.includes('caret'), '开始说话后回到正常文本 + 光标', first)
+
+  const done = live.liveHtml({ live: false, content: '**嗯**。' })
+  ok(
+    done.includes('<strong>嗯</strong>') && !done.includes('caret'),
+    '收尾后走 markdown，且没有光标',
+    done
+  )
+}
+
 /* ---------------- 5. 产物完整性 ---------------- */
 
 console.log('\n[5] 构建产物')
@@ -1959,11 +2011,14 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
   fs.writeFileSync(soulPath, life.SOUL_HISTORY[0], 'utf8')
   life.ensureLife()
   const soul = fs.readFileSync(soulPath, 'utf8')
-  ok(soul.includes('外面这层'), '老 SOUL 升级成「温柔外壳 + 理性内核」')
+  // D108：判断力移出人格文件，SOUL 里不再有「理性内核」那一节。
+  // 升级判据没变（逐字等于某个历史出厂版才换），断言值保留，名字改准。
+  ok(soul.includes('外面这层'), '老 SOUL 升级到当前出厂版（D108 后「理性」不再是人格里的一节）')
   ok(soul.includes('不要翻旧账'), '带着「不数落他重复」这条（那句「你第三遍了」的反面）')
   // 判据从「结论不能软」改成「事实判断」：D093 把「不附和」限定到事实层了，
-  // 自我评价不辩论（那是他的感受，不是命题）。理性层没丢，是边界划清了。
-  ok(soul.includes('事实判断'), '理性那层没丢：不附和管的是事实判断，不是他的自我评价')
+  // 自我评价不辩论（那是他的感受，不是命题）。D108 又把这条从「理性层」搬进了
+  // 「这一轮先做哪件」，判据（这两个词在不在）不变，它改的是**落点**。
+  ok(soul.includes('事实判断'), '「事实判断不附和／自我评价不辩论」没丢（D108 移到情形节）')
 
   life.ensureLife()
   ok(

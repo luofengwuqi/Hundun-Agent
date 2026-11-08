@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import SettingsPage from './components/SettingsPage.vue'
-import { renderMarkdown } from './markdown'
+import { liveHtml } from './live.js'
 
 // logo 的唯一源是 build/logo.svg，构建时原样拷到 out/renderer/。
 // 用 './logo.svg' 字面量会被 esbuild 当模块依赖去解析（找不到就报错），
@@ -485,10 +485,8 @@ onBeforeUnmount(() => {
               </div>
               <div class="content">
                 <div v-if="m.role === 'user'" class="bubble">{{ m.content }}</div>
-                <div
-                  v-else
-                  v-html="renderMarkdown(m.content) + (m.live ? '<span class=\'caret\'></span>' : '')"
-                />
+                <!-- 等待态也走这里：还没吐出第一个字时它显示「在想」，不是一片空白（D109） -->
+                <div v-else v-html="liveHtml(m)" />
               </div>
             </div>
           </template>

@@ -313,6 +313,47 @@ body {
   }
 }
 
+/* 等待态（D109）：它还没开口时的三个字。
+   颜色走 --ink-3、字号比正文小一号——这是一句状态，不是它说的话，
+   不能看起来像一句回答。三个点错开呼吸，让他知道在动，但不知道「到第几步了」，
+   因为我们确实不知道。 */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.thinking .dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.thinking .dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.24;
+  animation: thinking 1.15s ease-in-out infinite;
+}
+.thinking .dots i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+.thinking .dots i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+@keyframes thinking {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.85;
+  }
+}
+
 .divider {
   max-width: 660px;
   margin: 6px auto 24px;
