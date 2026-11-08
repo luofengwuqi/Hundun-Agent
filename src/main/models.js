@@ -126,9 +126,20 @@ function splitRef(ref) {
 */
 
 /**
- * 没有 GET /models 的服务商。有的家（Anthropic、Gemini）协议就不是 OpenAI 兼容的，
- * 本应用只会说一种协议，所以列进去也只会 404 —— 那不是「支持得不好」，是根本不通。
- * 目录里只放真能用 OpenAI 兼容接口的；其它一律走「自定义」。
+ * 写死的目录。**它会过期，这是一条已知的债。**
+ *
+ * 这些 id 是 2026-11-08 逐家核对过的（官方模型页 + OpenRouter 的 /models 接口）：
+ * 之前那份是更早写的，六家里五家已经下架 —— DeepSeek 的 deepseek-chat / deepseek-reasoner
+ * 早在 2026-07-24 就停了，Kimi 的 k2 系列 2026-05-25 下线，选出来只会在发消息时 404。
+ *
+ * 顺序是「便宜够用的在前，旗舰在后」，因为**没选模型时用的是第一个**（simpleToConfig），
+ * 而第一个不该是最贵的那个。界面上那句提示跟着改成「排在前面的是默认，越往后越强也越贵」。
+ *
+ * 真正的解法不是把这份名单改对，是别写死：这些家全都支持 GET /models
+ * （OpenRouter 那个 461 条就是这么拉的）。等有人愿意为它开一个界面入口，这份就该退役。
+ *
+ * 有的家（Anthropic、Gemini 原生协议）不是 OpenAI 兼容的，列进去只会 404 ——
+ * 那不是「支持得不好」，是根本不通。所以只放真能说 OpenAI 兼容接口的；其它一律走「自定义」。
  */
 const PRESETS = [
   {
@@ -137,8 +148,9 @@ const PRESETS = [
     baseUrl: 'https://api.deepseek.com/v1',
     keyUrl: 'https://platform.deepseek.com/api_keys',
     models: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat', context: 128000 },
-      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', context: 128000 }
+      // 官方现役只有这两个（deepseek-flash 由 V4.1-Flash-1017 提供服务）
+      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', context: 1000000 },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', context: 1000000 }
     ]
   },
   {
@@ -147,8 +159,10 @@ const PRESETS = [
     baseUrl: 'https://api.moonshot.cn/v1',
     keyUrl: 'https://platform.moonshot.cn/console/api-keys',
     models: [
-      { id: 'kimi-k2-0905-preview', name: 'Kimi K2', context: 256000 },
-      { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', context: 256000 }
+      // k2 系列已下线（2026-05-25），现役是 K3.1 一档、K3 一档。没有便宜档，
+      // 所以默认就是 pro 本身；highspeed 只是同样的脑子跑得快些，放后面
+      { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', context: 1000000 },
+      { id: 'kimi-k3.1-pro-highspeed', name: 'Kimi K3.1 Pro 高速版', context: 1000000 }
     ]
   },
   {
@@ -157,8 +171,8 @@ const PRESETS = [
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     keyUrl: 'https://bigmodel.cn/usercenter/apikeys',
     models: [
-      { id: 'glm-4.6', name: 'GLM-4.6', context: 200000 },
-      { id: 'glm-4.5-air', name: 'GLM-4.5 Air', context: 128000 }
+      { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', context: 1000000 },
+      { id: 'glm-5.3', name: 'GLM-5.3', context: 1000000 }
     ]
   },
   {
@@ -167,9 +181,8 @@ const PRESETS = [
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     keyUrl: 'https://bailian.console.aliyun.com/?tab=model#/api-key',
     models: [
-      { id: 'qwen-plus', name: 'Qwen Plus', context: 131072 },
-      { id: 'qwen-max', name: 'Qwen Max', context: 32768 },
-      { id: 'qwen-turbo', name: 'Qwen Turbo', context: 131072 }
+      { id: 'qwen3.7-flash', name: 'Qwen3.7 Flash', context: 1000000 },
+      { id: 'qwen3.7-max', name: 'Qwen3.7 Max', context: 1000000 }
     ]
   },
   {
@@ -178,8 +191,8 @@ const PRESETS = [
     baseUrl: 'https://api.siliconflow.cn/v1',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak',
     models: [
-      { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3（硅基）', context: 131072 },
-      { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507', name: 'Qwen3 235B（硅基）', context: 131072 }
+      { id: 'deepseek-ai/DeepSeek-V4.1-Flash', name: 'DeepSeek V4.1 Flash（硅基）', context: 1048576 },
+      { id: 'deepseek-ai/DeepSeek-V4-Pro', name: 'DeepSeek V4 Pro（硅基）', context: 1048576 }
     ]
   },
   {
@@ -188,8 +201,8 @@ const PRESETS = [
     baseUrl: 'https://openrouter.ai/api/v1',
     keyUrl: 'https://openrouter.ai/keys',
     models: [
-      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', context: 128000 },
-      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', context: 200000 }
+      { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', context: 1048576 },
+      { id: 'anthropic/claude-sonnet-5.5', name: 'Claude Sonnet 5.5', context: 1000000 }
     ]
   },
   {
@@ -542,6 +555,90 @@ function removeModel(json, ref) {
 }
 
 /**
+ * 往清单里加一个模型（D110）。纯函数，不碰磁盘。
+ *
+ * 一个卡片 = 一份「地址 + key + 模型」，但**地址相同的并进同一个 provider**：
+ * 同一家里放第二个模型不用再填一遍 key，一个地址也只有一把 key 才对得上。
+ * 卡片上那个名字（他起的，比如「DeepSeek（中转站）」）存在 `models[模型].name` 里——
+ * opencode 本来就用它当显示名，所以这不是新造的字段，只是把它交给他填。
+ *
+ * @param {object} json 现有配置
+ * @param {{name?,presetId?,presetName?,baseUrl?,apiKey?,modelId,context?}} spec
+ */
+function addEntry(json, spec) {
+  const s = spec && typeof spec === 'object' ? spec : {}
+  const modelId = String(s.modelId || '').trim()
+  const baseUrl = String(s.baseUrl || '').trim()
+  const label = String(s.name || '').trim()
+  if (!modelId) return { ok: false, error: '没填模型名' }
+  if (modelId.includes('/')) return { ok: false, error: '模型名里不要带斜杠（斜杠是 provider 和模型的分界）' }
+  if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, error: '接口地址要以 http:// 或 https:// 开头' }
+
+  const out = JSON.parse(JSON.stringify(json && typeof json === 'object' ? json : {}))
+  out.provider = out.provider && typeof out.provider === 'object' ? out.provider : {}
+
+  const normUrl = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase()
+  let pid = ''
+  for (const [id, conf] of Object.entries(out.provider)) {
+    if (id.includes('/') || !conf || typeof conf !== 'object') continue
+    const opts = conf.options && typeof conf.options === 'object' ? conf.options : {}
+    if (normUrl(opts.baseURL || opts.baseUrl) === normUrl(baseUrl)) {
+      pid = id
+      break
+    }
+  }
+
+  if (!pid) {
+    // provider 的 id 只用来切引用，他自己看的是 name，所以这里只要合法且不重名
+    const base =
+      String(s.presetId || 'custom')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '')
+        .slice(0, 32) || 'custom'
+    pid = base
+    let n = 2
+    while (out.provider[pid]) pid = base + '-' + n++
+    out.provider[pid] = {
+      name: String(s.presetName || '自定义').trim() || '自定义',
+      npm: OPENAI_COMPATIBLE,
+      options: { baseURL: baseUrl },
+      models: {}
+    }
+  }
+
+  const conf = out.provider[pid]
+  conf.options = { ...(conf.options || {}) }
+  if (!conf.options.baseURL) conf.options.baseURL = baseUrl
+  const key = String(s.apiKey == null ? '' : s.apiKey).trim()
+  // 同一地址只有一把 key。他重新填了就以新填的为准——留着旧的那把，
+  // 表现是「改了 key 还是 401」，而没有任何地方会说哪里不对。
+  if (key) conf.options.apiKey = key
+  conf.models = conf.models && typeof conf.models === 'object' ? conf.models : {}
+
+  const prev = conf.models[modelId] && typeof conf.models[modelId] === 'object' ? conf.models[modelId] : {}
+  const mconf = { ...prev }
+  // 没起名字就沿用原来的显示名，再没有就是模型 id —— 不要把他填过的名字冲成 id
+  mconf.name = label || String(prev.name || '').trim() || modelId
+  const ctx = Number(s.context)
+  if (Number.isFinite(ctx) && ctx > 0) mconf.limit = { ...(mconf.limit || {}), context: Math.floor(ctx) }
+  conf.models[modelId] = mconf
+
+  const ref = pid + '/' + modelId
+  const list = orderOf(out)
+  if (list.includes(ref)) return { ok: false, error: '这个模型已经在清单里了' }
+  list.push(ref)
+  const cfg = withOrder(out, list)
+  // 从一家一个模型变成两个以上，就不再是「简单配置」了；留着那个标记，
+  // 下次有人读它就会以为是「只有一家、只有一个模型」。
+  if (list.length > 1 && cfg['x-hundun'] && cfg['x-hundun'].simple) {
+    const ext = { ...cfg['x-hundun'] }
+    delete ext.simple
+    cfg['x-hundun'] = ext
+  }
+  return { ok: true, config: cfg, ref }
+}
+
+/**
  * 从已保存的配置算出「实际要用的几个值」。
  *
  * 这些值是 llm.js 唯一认的东西。它们不再由人直接填，而是每次从 modelConfig 现算 ——
@@ -595,6 +692,7 @@ module.exports = {
   withOrder,
   moveModel,
   addModel,
+  addEntry,
   removeModel,
   seedFromLegacy,
   simpleToConfig,

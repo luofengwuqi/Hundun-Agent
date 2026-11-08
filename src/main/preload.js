@@ -22,7 +22,9 @@ contextBridge.exposeInMainWorld('hundun', {
     setKey: (key) => ipcRenderer.invoke('cfg:setKey', key),
     pickModelFile: () => ipcRenderer.invoke('cfg:pickModelFile'),
     // 卡片上的排序／增删。只改对象不写盘，改完还要走 applyModel 才算数。
-    editModel: (payload) => ipcRenderer.invoke('cfg:modelEdit', payload)
+    editModel: (payload) => ipcRenderer.invoke('cfg:modelEdit', payload),
+    // 「再加一个」（D110）：拼一份新条目进配置，同样只改对象不写盘
+    addModel: (payload) => ipcRenderer.invoke('cfg:modelAdd', payload)
   },
 
   life: {

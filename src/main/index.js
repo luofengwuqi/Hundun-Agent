@@ -374,6 +374,31 @@ function registerIpc() {
   })
 
   /**
+   * 「再加一个」（D110）：把一份「地址 + key + 模型 + 名字」拼进现有配置。
+   *
+   * 拼装放在主进程而不是界面里，理由和 `modelEdit` 一样：界面那份迟早会和解析那份走偏，
+   * 而拼错的表现只是「它用的不是他加的那个」，没有任何报错。
+   * 这里仍然只改对象、不写盘 —— 结果回给界面，由界面走「预览 → 应用」那条老路。
+   */
+  ipcMain.handle('cfg:modelAdd', (_e, payload) => {
+    const { config, entry } = payload || {}
+    let obj
+    try {
+      obj = typeof config === 'string' ? JSON.parse(config) : config
+    } catch (e) {
+      return { ok: false, error: jsonError(config, e) }
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      return { ok: false, error: '这份配置不是一个对象' }
+    }
+    const r = models.addEntry(obj, entry)
+    if (!r.ok) return r
+    const pv = store.previewModel(r.config)
+    if (!pv.ok) return { ok: false, error: pv.errors.join('；'), errors: pv.errors }
+    return { ok: true, config: r.config, ref: r.ref, warnings: pv.warnings }
+  })
+
+  /**
    * 简单模式：选一家、选一个、填个 key。
    *
    * 它不落成另一份配置，而是现场生成一份 JSON，再走上面那条「预览 → 写入」——

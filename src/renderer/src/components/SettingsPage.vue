@@ -6,9 +6,12 @@
  * 模型这块照 opencode 的格式来：一份 JSON 说清有哪些 provider、各自有哪些模型、
  * 现在用哪个。**JSON 是唯一的源**，写进去之后 baseUrl／apiKey／model 都由它算出来。
  *
- * 但格式是给机器看的，第一句话是给人说的（D077）：所以上面多一栏「简单」——
- * 选一家、选一个、填个 key，完事。它不落成另一份配置，而是现场生成同一份 JSON，
- * 所以下面那栏里能看见它写成了什么，「直接写 JSON」也没被拿走。
+ * D110 起这一栏拆成两段，顺序就是他读这一页的顺序：
+ *   一、已经配好的 —— 卡片，从上到下就是尝试顺序，排第一的先用；
+ *   二、再加一个 —— 名字、哪一家、key、哪个模型，一处填完。
+ * 原来那份「简单／直接写 JSON」的两栏切换没了：它其实是在问「你要用简单的写法还是复杂的写法」，
+ * 而他要的是「我现在有哪几个模型、再加一个」。JSON 本身没消失，只是退到「手写 JSON」那一行后面 ——
+ * `{env:}` 和别人的配置只能从那儿进来。
  */
 import { ref, computed, onMounted, watch } from 'vue'
 
@@ -20,19 +23,7 @@ const LOGO = './logo.svg'
 const props = defineProps({ cfg: { type: Object, required: true } })
 const emit = defineEmits(['saved'])
 
-/* ---------------- 简单模式（D077） ---------------- */
-
 const presets = ref([])
-const simple = ref({ preset: '', baseUrl: '', apiKey: '', model: '' })
-const sMsg = ref('')
-const sKind = ref('')
-const sBusy = ref(false)
-/** 他手填的模型名不在目录里时，多出来一个输入框 */
-const sCustomModel = ref('')
-/** 哪一栏：认得出目录就是简单，认不出（手写的 JSON、多 provider）就直接给他 JSON */
-const view = ref(props.cfg.modelSimple ? 'simple' : 'json')
-/** 配好之后表单是收起来的 —— 每天要看的是「在用什么」，不是六个输入框 */
-const editing = ref(false)
 
 /**
  * 去服务商后台拿 key。
@@ -44,132 +35,16 @@ function openKey(url) {
   if (url) window.hundun.openExternal(url)
 }
 
-const curPreset = computed(() => presets.value.find((p) => p.id === simple.value.preset) || null)
-
-/** 目录里的模型 + 他可能手填的那个。手填的那个单独标出来，不然它会在列表里凭空消失 */
-const sModels = computed(() => {
-  const p = curPreset.value
-  if (!p) return []
-  const list = p.models.map((m) => ({ id: m.id, name: m.name, extra: false }))
-  const cur = String(simple.value.model || '').trim()
-  if (cur && !list.some((m) => m.id === cur)) list.push({ id: cur, name: cur, extra: true })
-  return list
-})
-
-const sNeedsKey = computed(() => !curPreset.value?.noKey && !curPreset.value?.custom)
-
-function loadPresets() {
-  const c = props.cfg.modelSimple
-  if (!c) return
-  simple.value = { ...simple.value, ...c }
-  // 还没配过就先给他看「都有哪几家」。默认停在 DeepSeek 表单上，等于替他已经选了
-  if (!props.cfg.hasApiKey && !c.apiKey) simple.value.preset = ''
-  // 存的是「目录外的那个模型名」时，把它放进手填框，免得他以为丢了
-  const p = presets.value.find((x) => x.id === simple.value.preset)
-  if (p && c.model && !p.custom && !p.models.some((m) => m.id === c.model)) sCustomModel.value = c.model
-}
-
-onMounted(async () => {
-  try {
-    presets.value = await window.hundun.cfg.presets()
-  } catch {}
-  // 目录回来之后再过一遍：目录外的模型名要认出来得先有目录
-  loadPresets()
-})
-
-/**
- * 选服务商 = 一次真正的切换，不是「改了还没存」。
- * 换一家还留着一个用不了的模型名和别人的 key，下次打开会是个说不清的半成品；
- * 而切走再切回来想把 key 找回来 —— 那种期待不该靠界面上的一行字符串来满足。
- */
-async function pickPreset(p) {
-  const before = { ...simple.value }
-  const key = before.preset === p.id ? before.apiKey : ''
-  simple.value = {
-    preset: p.id,
-    baseUrl: p.custom ? before.baseUrl || '' : '',
-    apiKey: key,
-    model: p.models[0]?.id || (p.custom ? String(before.model || '') : '')
-  }
-  if (p.custom) sCustomModel.value = before.model || ''
-  sMsg.value = ''
-  sKind.value = ''
-  // 换一家 = 现在就存，不给「改了还没应用」留半截状态。缺 key 的那几家先别存，等填完再说
-  if (p.noKey || String(key).trim()) await saveModel()
-  else editing.value = true
-}
-
-/** 只改当前用的那个：目录、地址都不动，所以走「只换 key」那条更窄的路 */
-async function saveModel() {
-  const p = curPreset.value
-  if (!p) return
-  const model = String(simple.value.model || '').trim() || (p.models[0]?.id ?? '')
-  if (sNeedsKey.value && !String(simple.value.apiKey || '').trim()) {
-    sMsg.value = '先填 API Key'
-    sKind.value = 'bad'
-    return
-  }
-  if (p.custom && !String(simple.value.baseUrl || '').trim()) {
-    sMsg.value = '自定义服务商要填接口地址'
-    sKind.value = 'bad'
-    return
-  }
-  sBusy.value = true
-  sMsg.value = ''
-  const r = await window.hundun.cfg.applySimple({ ...simple.value, model })
-  sBusy.value = false
-  if (!r.ok) {
-    sMsg.value = (r.errors || ['没存上']).join('；')
-    sKind.value = 'bad'
-    return
-  }
-  simple.value.model = model
-  sMsg.value = '已保存'
-  sKind.value = 'ok'
-  if (r.cfg) emit('saved', r.cfg)
-}
-
-/** 换 key 不动模型：唯一的理由是不该因为改个 key 就把备用链的顺序冲掉 */
-async function saveKey() {
-  sBusy.value = true
-  const r = await window.hundun.cfg.setKey(simple.value.apiKey)
-  sBusy.value = false
-  if (!r.ok) {
-    sMsg.value = (r.errors || ['没存上']).join('；')
-    sKind.value = 'bad'
-    return
-  }
-  sMsg.value = '已保存'
-  sKind.value = 'ok'
-  if (r.cfg) emit('saved', r.cfg)
-}
-
-/** 手填模型名：加进目录之外的那一格，然后照常保存 */
-function useTypedModel() {
-  const v = String(sCustomModel.value || '').trim()
-  if (!v) return
-  simple.value.model = v
-  saveModel()
-}
-
-/** 已经配好、而且默认在简单栏：这时候它是一张卡片，不是一堆下拉框 */
-/** 已经配好、而且认得出是简单配置：这时候它是一张卡片，不是一堆下拉框 */
-const showCard = computed(
-  () => Boolean(curPreset.value) && Boolean(props.cfg.hasApiKey) && !props.cfg.modelBroken
-)
-/** JSON 里带了备用模型或改了排序：简单栏只画第一个，装不下这个事实，得说出来 */
-const multiInJson = computed(() => (props.cfg.modelChain || []).length > 1)
-
-/* ---------------- 模型（直接写 JSON） ---------------- */
+/* ---------------- 一、已经配好的 ---------------- */
 
 const text = ref('')
-const preview = ref(null) // { ok, errors, warnings, providers, selected }
+const preview = ref(null) // { ok, errors, warnings, providers, selected, chain }
 const imported = ref('')
 const applying = ref(false)
 const applyMsg = ref('')
 const applyKind = ref('')
 
-/** 已保存的那份（老配置没有，用 store 生成的 seed 顶上） */
+/** 已保存的那份（老配置没有，用 store 生成的 seed 顶上 —— 它只给编辑器打底，不当卡片画） */
 const savedJson = computed(() => props.cfg.modelConfig || props.cfg.modelSeed || null)
 const savedText = computed(() => (savedJson.value ? JSON.stringify(savedJson.value, null, 2) : ''))
 const dirty = computed(() => text.value.trim() !== savedText.value.trim())
@@ -192,24 +67,35 @@ async function runPreview() {
 }
 
 onMounted(runPreview)
+onMounted(async () => {
+  try {
+    presets.value = await window.hundun.cfg.presets()
+  } catch {}
+})
+
+/**
+ * 卡片只画**已经存下来**的那份，不画 seed。
+ *
+ * 新装的时候 seed 里有一个占位 provider（`default/default`），它只是为了给 JSON 编辑器一个骨架。
+ * 拿它当卡片画出来，第一次打开的人会看见一个自己从没配过、名字叫 default 的模型 —— 那是假的。
+ */
+const chain = computed(() => (props.cfg.modelConfig ? preview.value?.chain || [] : []))
 
 /**
  * 角标跟着**编辑器里那份**走，不跟已保存的走。
  *
- * 它和下面第一张卡片必须说同一句话：他刚点了「先用」，卡片已经换成 R1 了，
+ * 它和第一张卡片必须说同一句话：他刚点了「先用」，卡片已经换成 R1 了，
  * 角标还挂着 Chat，那到底是哪个在用？—— 这种不一致没法靠用户在界面上自己解释。
  * 「改了还没生效」这件事用后缀说，不用两个不同的名字说。
  */
 const inUseText = computed(() => {
   if (props.cfg.modelBroken) return '配置坏了'
+  if (!props.cfg.modelConfig) return '还没配模型'
   // 用显示名而不是 model id：卡片上写「DeepSeek Chat」，角标写「deepseek-chat」
   // 会让人以为这是两个东西。
   const first = preview.value?.chain?.[0]
   if (first) return first.modelName
-  const saved = props.cfg.modelChain && props.cfg.modelChain[0]
-  if (saved) return saved.modelName
-  if (!props.cfg.model) return '还没选模型'
-  return props.cfg.model
+  return props.cfg.model || ''
 })
 
 const badgeText = computed(() => inUseText.value + (dirty.value ? ' · 未应用' : ''))
@@ -219,16 +105,17 @@ function fmtCtx(n) {
   return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
 }
 
+const refOf = (m) => m.providerId + '/' + m.modelId
+
 /**
- * 按顺序试的那条链。第一张就是现在用的，后面的都是备用。
- * 用 preview 而不是 props.cfg：手改 JSON 还没应用时，卡片也要跟着变，
- * 否则改完上面、下面的卡片还是旧的，人就不知道哪个是真的。
+ * 配置里有、但还没排进清单的模型 —— 特别是从别人的 JSON 导入之后：
+ * 那份文件里一个 provider 常常有五个模型，而只有顶层 `model` 那个进了链。
+ * 没有这个入口，剩下四个就只能靠手写 JSON 才排得进来。
  */
-const chain = computed(() => preview.value?.chain || [])
 const providers = computed(() => preview.value?.providers || [])
 const editable = computed(() => Boolean(preview.value?.ok))
+const adding = ref(false)
 
-/** 还没进链的模型，按 provider 分组 —— 就是「+ 添加模型」里能点的那些 */
 const candidates = computed(() => {
   const used = new Set(chain.value.map((m) => m.providerId + '/' + m.modelId))
   const out = []
@@ -239,7 +126,10 @@ const candidates = computed(() => {
   return out
 })
 
-const refOf = (m) => m.providerId + '/' + m.modelId
+const addOne = (p, m) => {
+  adding.value = false
+  editChain('add', p.id + '/' + m.id)
+}
 
 /**
  * 卡片的每个动作都走这里：改对象 → 写回编辑器 → 预览 → 应用。
@@ -247,12 +137,15 @@ const refOf = (m) => m.providerId + '/' + m.modelId
  * 改的是编辑器里那份文本，不是磁盘上那份。这样「改了一半的 JSON」不会被
  * 点一下卡片就悄悄覆盖掉；反过来，卡片操作也不会因为草稿没应用而改了没反应。
  */
+const editMsg = ref('')
+const editKind = ref('')
+
 async function editChain(op, ref, extra) {
   let obj
   try {
     obj = JSON.parse(text.value)
   } catch {
-    editMsg.value = 'JSON 有语法错误，先把编辑器里的改对'
+    editMsg.value = 'JSON 有语法错误，先把「手写 JSON」里的改对'
     editKind.value = 'bad'
     return
   }
@@ -268,15 +161,12 @@ async function editChain(op, ref, extra) {
   if (preview.value?.ok) await apply(true)
 }
 
-const editMsg = ref('')
-const editKind = ref('')
-
 /**
  * 单独测一个模型。
  *
  * 底下那个「测试连接」只测首选 —— 而备用模型最容易出的问题是「配了但从没通过」：
  * 等主模型真挂了才发现备用也不通，那就等于根本没有备用。
- * 结果按 ref 记在卡片上，不弹窗：他要的是「这四张里哪张是通的」一眼看到。
+ * 结果按 ref 记在卡片上，不弹窗：他要的是「这几张里哪张是通的」一眼看到。
  */
 const tested = ref({})
 
@@ -298,10 +188,6 @@ const setHead = (m) => editChain('move', refOf(m), { to: 0 })
 const moveUp = (m, i) => editChain('move', refOf(m), { to: i - 1 })
 const moveDown = (m, i) => editChain('move', refOf(m), { to: i + 1 })
 const drop = (m) => editChain('remove', refOf(m))
-const addOne = (p, m) => {
-  adding.value = false
-  editChain('add', p.id + '/' + m.id)
-}
 
 /* ---- 拖拽排序 ---- */
 
@@ -326,17 +212,109 @@ function onDrop(i) {
   if (m) editChain('move', refOf(m), { to: i })
 }
 
-/* ---- 编辑器 ---- */
+/* ---------------- 二、再加一个 ---------------- */
+
+/**
+ * 表单状态。
+ *
+ * `typed` 是「目录里没有，自己填的模型名」，它优先于目录里选中的那个 ——
+ * 目录不可能穷举人家新发的模型，而「目录更新不及时」不该表现成「用不了」。
+ */
+const f = ref({ name: '', preset: '', baseUrl: '', apiKey: '', model: '', typed: '' })
+const fBusy = ref(false)
+const fMsg = ref('')
+const fKind = ref('')
+
+const fPreset = computed(() => presets.value.find((p) => p.id === f.value.preset) || null)
+const fNeedsKey = computed(() => Boolean(fPreset.value) && !fPreset.value.noKey)
+const fModels = computed(() => (fPreset.value ? fPreset.value.models : []))
+/** 最终会用哪个模型：自己填的优先 */
+const fModelId = computed(() => String(f.value.typed || f.value.model || '').trim())
+
+/**
+ * 换一家 = 把这一家不该留的字段清掉。
+ *
+ * 留着一家的 key 配另一家的地址，下次打开就是个说不清的半成品；
+ * 而「切走再切回来想把 key 找回来」那种期待，不该靠界面上的一行字符串来满足。
+ */
+function pickF(id) {
+  const p = presets.value.find((x) => x.id === id) || null
+  f.value = {
+    name: f.value.name,
+    preset: id,
+    baseUrl: p && p.custom ? f.value.baseUrl : '',
+    apiKey: '',
+    model: p && p.models[0] ? p.models[0].id : '',
+    typed: ''
+  }
+  fMsg.value = ''
+  fKind.value = ''
+}
+
+function say(m, k) {
+  fMsg.value = m
+  fKind.value = k
+}
+
+/**
+ * 加进去。
+ *
+ * 拼装在主进程（`models.addEntry`），这里只负责收字段、给默认值、把结果落盘。
+ * 落盘走「预览 → 应用」那条老路，所以加完之后卡片的顺序、角标、错误提示全是同一套。
+ */
+async function addEntry() {
+  const p = fPreset.value
+  if (!p) return say('先选一个服务商', 'bad')
+  const modelId = fModelId.value
+  if (!modelId) return say('挑一个模型，或者在下面写个名字', 'bad')
+  if (modelId.includes('/')) return say('模型名里不要带斜杠', 'bad')
+  const baseUrl = p.custom ? String(f.value.baseUrl || '').trim() : p.baseUrl
+  if (!baseUrl) return say('自定义服务商要填接口地址', 'bad')
+  if (fNeedsKey.value && !String(f.value.apiKey || '').trim()) return say('先填 API Key', 'bad')
+
+  let obj
+  if (props.cfg.modelConfig) {
+    try {
+      obj = JSON.parse(text.value)
+    } catch {
+      return say('「手写 JSON」里有语法错误，先把它改对', 'bad')
+    }
+  } else {
+    // 新装：seed 里那个占位 provider 不参与拼装，从空配置起
+    obj = { provider: {} }
+  }
+
+  const picked = fModels.value.find((m) => m.id === modelId)
+  const name = String(f.value.name || '').trim() || (picked ? picked.name : modelId)
+
+  fBusy.value = true
+  const r = await window.hundun.cfg.addModel({
+    config: obj,
+    entry: {
+      presetId: p.id,
+      presetName: p.name,
+      baseUrl,
+      apiKey: f.value.apiKey,
+      modelId,
+      name,
+      context: picked ? picked.context : 0
+    }
+  })
+  fBusy.value = false
+  if (!r.ok) return say(r.error || '没加上', 'bad')
+
+  text.value = JSON.stringify(r.config, null, 2)
+  await runPreview()
+  const applied = await apply(true)
+  if (!applied || !applied.ok) return say('加进去了，但没存上：' + (applyMsg.value || '看一眼上面的提示'), 'bad')
+
+  f.value = { name: '', preset: '', baseUrl: '', apiKey: '', model: '', typed: '' }
+  say('加好了。它在最后一个 —— 想让它先上，点卡片上的「先用」。', 'ok')
+}
+
+/* ---- 手写 JSON（收在「进阶」那一行后面） ---- */
 
 const showJson = ref(false)
-const adding = ref(false)
-
-/** 在最底下用一句人话说清那份 JSON 里现在是什么，不然「没了吗」得自己去下面找 */
-const jsonSummary = computed(() => {
-  const c = chain.value
-  if (!c.length) return ''
-  return c.length === 1 ? '现在是一份没改过的简单配置' : `JSON 里排了 ${c.length} 个模型，前${c.length - 1}个是备用`
-})
 
 async function importFile() {
   const r = await window.hundun.cfg.pickModelFile()
@@ -350,6 +328,7 @@ async function importFile() {
   imported.value = r.name
   applyMsg.value = ''
   applyKind.value = ''
+  showJson.value = true
   await runPreview()
 }
 
@@ -374,7 +353,7 @@ async function apply(silent = false) {
   if (!r.ok) {
     applyMsg.value = (r.errors || ['应用失败']).join('；')
     applyKind.value = 'bad'
-    return
+    return r
   }
   preview.value = { ...(preview.value || {}), warnings: r.warnings || [] }
   const n = (r.warnings || []).length
@@ -384,6 +363,7 @@ async function apply(silent = false) {
     applyKind.value = n ? 'warn' : 'ok'
   }
   if (r.cfg) emit('saved', r.cfg)
+  return r
 }
 
 /* ---------------- 测试连接 ---------------- */
@@ -394,8 +374,8 @@ const testKind = ref('')
 
 async function test() {
   const s = preview.value?.selected
-  if (!s) {
-    testMsg.value = '先把配置写对，才有东西可测'
+  if (!s || !props.cfg.modelConfig) {
+    testMsg.value = '先配一个模型，才有东西可测'
     testKind.value = 'bad'
     return
   }
@@ -498,161 +478,17 @@ const dirLabel = computed(() => {
       <section class="set-block">
         <div class="set-title">
           <h2>模型</h2>
-          <span
-            class="set-badge"
-            :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey, warn: dirty && view === 'json' }"
-          >
+          <span class="set-badge" :class="{ bad: props.cfg.modelBroken || !props.cfg.hasApiKey }">
             {{ badgeText }}
           </span>
         </div>
 
-        <div class="switch">
-          <button :class="{ on: view === 'simple' }" @click="view = 'simple'">简单</button>
-          <button :class="{ on: view === 'json' }" @click="view = 'json'">直接写 JSON</button>        </div>
-
-        <!-- ================= 简单 ================= -->
-        <div v-if="view === 'simple'" class="simple">
-          <p v-if="!showCard" class="set-note">
-            选一个模型服务商，把它的 API Key 填进来就能用了。想配好几个、排备用顺序，切到「直接写
-            JSON」。
-          </p>
-
-          <!-- 还没选服务商：一排按钮 -->
-          <div v-if="!simple.preset" class="sgrid">
-            <button v-for="p in presets" :key="p.id" class="sprov" @click="pickPreset(p)">
-              <span class="sprov-name">{{ p.name }}</span>
-              <span class="sprov-meta">{{ p.custom ? '自己填地址' : p.noKey ? '不用 key' : p.models.length + ' 个模型' }}</span>
-            </button>
+        <!-- ---------- 一、已经配好的 ---------- -->
+        <div class="sect">
+          <div class="sect-head">
+            <h3>已经配好的</h3>
+            <p>排在前面的先用。它连不上，才轮到下面那个。</p>
           </div>
-
-          <template v-else>
-            <!-- 已经配好的样子：一张卡，不是一堆输入框 -->
-            <div v-if="showCard" class="mcard head">
-              <span class="mrank">1</span>
-              <div class="mmain">
-                <div class="mline">
-                  <span class="mname">{{ curPreset.name }}</span>
-                  <span class="mtag">先用这个</span>
-                </div>
-                <div class="msub">
-                  {{ sModels.find((m) => m.id === simple.model)?.name || simple.model }}
-                  <span v-if="simple.model && simple.model !== (sModels.find((m) => m.id === simple.model)?.name || '')">
-                    · {{ simple.model }}</span
-                  >
-                </div>
-                <div class="murl">{{ props.cfg.baseUrl }}</div>
-              </div>
-              <div class="mops" style="opacity: 1">
-                <button class="mop" @click="simple.preset = ''">换一家</button>
-              </div>
-            </div>
-
-            <!-- 要改的地方：只在没配好，或者他点了「改」时出现 -->
-            <div v-if="!showCard || editing" class="sform">
-              <div class="cfg-row">
-                <div class="cfg-label">
-                  <span>服务商</span>
-                  <small v-if="curPreset.custom">任何说 OpenAI 兼容接口的服务，地址里一般带 /v1</small>
-                  <small v-else>{{ curPreset.name }}</small>
-                </div>
-                <button class="mini" @click="simple.preset = ''">换一家</button>
-              </div>
-
-              <div v-if="curPreset.custom" class="cfg-row">
-                <div class="cfg-label">
-                  <span>接口地址</span>
-                  <small>形如 https://api.example.com/v1</small>
-                </div>
-                <input v-model.trim="simple.baseUrl" class="cfg-text" placeholder="https://" spellcheck="false" />
-              </div>
-
-              <div v-if="sNeedsKey || curPreset.custom" class="cfg-row">
-                <div class="cfg-label">
-                  <span>API Key</span>
-                  <small>
-                    <a v-if="curPreset.keyUrl" class="slink" @click.prevent="openKey(curPreset.keyUrl)">
-                      去 {{ curPreset.name }} 拿一个
-                    </a>
-                    <span v-else>存在本机 config.json，权限 600，不会发到别处</span>
-                  </small>
-                </div>
-                <input
-                  v-model.trim="simple.apiKey"
-                  class="cfg-text"
-                  type="password"
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="sk-…"
-                />
-              </div>
-
-              <div class="cfg-row">
-                <div class="cfg-label">
-                  <span>用哪个模型</span>
-                  <small>排在前面的通常更聪明，也通常更贵</small>
-                </div>
-                <div class="smodels">
-                  <button
-                    v-for="m in sModels"
-                    :key="m.id"
-                    class="smodel"
-                    :class="{ on: simple.model === m.id }"
-                    @click="simple.model = m.id"
-                  >
-                    <span class="smodel-name">{{ m.name }}</span>
-                    <span v-if="m.extra" class="smodel-tag">自己填的</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="cfg-row">
-                <div class="cfg-label">
-                  <span>目录里没有</span>
-                  <small>它们新发的模型，直接填名字用</small>
-                </div>
-                <div class="sadd">
-                  <input
-                    v-model.trim="sCustomModel"
-                    class="cfg-text"
-                    spellcheck="false"
-                    :placeholder="curPreset.models[0]?.id || '模型名'"
-                    @keydown.enter.prevent="useTypedModel"
-                  />
-                  <button class="mini" :disabled="!sCustomModel.trim() || sBusy" @click="useTypedModel">用这个</button>
-                </div>
-              </div>
-
-              <div class="sact">
-                <button v-if="!showCard" class="btn primary sm" :disabled="sBusy" @click="saveModel">
-                  {{ sBusy ? '保存中…' : '就它了' }}
-                </button>
-                <button v-else class="btn primary sm" :disabled="sBusy" @click="saveKey">
-                  {{ sBusy ? '保存中…' : '保存密钥' }}
-                </button>
-                <span v-if="sMsg" class="status" :class="sKind">{{ sMsg }}</span>
-              </div>
-            </div>
-
-            <div v-else class="sact">
-              <button class="mini" @click="editing = true">改密钥 / 换模型</button>
-              <span class="json-spacer" />
-              <span class="status" :class="testKind">{{ testMsg }}</span>
-              <button class="btn sm" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连接' }}</button>
-            </div>
-
-            <p v-if="multiInJson" class="chain-hint smulti">
-              这份配置里排了 {{ chain.length }} 个模型、按顺序备用 —— 这里只显示第一个。改那边请去「直接写
-              JSON」，这儿一存会把备用链换掉。
-            </p>
-          </template>
-        </div>
-
-        <!-- ================= JSON ================= -->
-        <div v-else class="simple">
-          <p class="set-note">
-            排在前面的先用，连不上就换下一个。拖动卡片也能改顺序。key 写成
-            <code>{env:变量名}</code> 或 <code>{file:路径}</code>，那样它不会进配置文件。
-          </p>
 
           <!-- 解析结果：错误放最上面，因为下面的卡片全都建在它上面 -->
           <div v-if="preview && (preview.errors?.length || preview.warnings?.length)" class="preview">
@@ -714,37 +550,30 @@ const dirLabel = computed(() => {
                 <button v-if="i < chain.length - 1" class="mop" title="下移" @click="moveDown(m, i)">
                   ↓
                 </button>
-                <button v-if="chain.length > 1" class="mop del" title="移出列表" @click="drop(m)">
+                <button v-if="chain.length > 1" class="mop del" title="移出清单" @click="drop(m)">
                   ✕
                 </button>
               </div>
             </div>
           </div>
-          <p v-else-if="!preview || !preview.errors?.length" class="empty-chain">
-            还没有模型。下面写一份 JSON，或者从文件导入。
+          <p v-else-if="!preview?.errors?.length" class="empty-chain">
+            还没有模型。在下面加一个就行。
           </p>
 
-          <!-- 一份没动过的简单配置：不用再跟他解释一遍，想添备用的才点开 -->
-          <div v-if="chain.length === 1" class="squiet">
-            这是那份 JSON 生成的，平时不用看。
-            <button class="mini" @click="showJson = true">展开看看</button>
-          </div>
-
-          <div v-else class="chain-foot">
+          <!-- 配置里有、还没排进来的（多为导入的 JSON 里那些） -->
+          <div v-if="chain.length" class="chain-foot">
             <button
               class="mini chain-toggle"
               :disabled="!editable || !candidates.length"
               @click="adding = !adding"
             >
-              {{ adding ? '收起' : '+ 添加模型' }}
+              {{ adding ? '收起' : '+ 排进来' }}
             </button>
             <span v-if="editable && !candidates.length" class="chain-hint">
-              配置里的模型都已经在列表里了
+              配置里的模型都已经在清单里了
             </span>
-            <span v-if="editMsg" class="status" :class="editKind">{{ editMsg }}</span>
           </div>
 
-          <!-- 候选：配置里有、但还没排进链的 -->
           <div v-if="adding && candidates.length" class="cand">
             <div v-for="p in candidates" :key="p.id" class="cand-group">
               <div class="cand-head">
@@ -759,13 +588,18 @@ const dirLabel = computed(() => {
             </div>
           </div>
 
+          <div v-if="editMsg" class="act-row">
+            <span class="status" :class="editKind">{{ editMsg }}</span>
+          </div>
+
           <div class="act-row">
             <button class="mini" @click="importFile">从文件导入</button>
-            <button v-if="chain.length > 1 || showJson" class="mini" @click="showJson = !showJson">
-              {{ showJson ? '收起 JSON' : '编辑 JSON' }}
+            <button class="mini" @click="showJson = !showJson">
+              {{ showJson ? '收起 JSON' : '手写 JSON' }}
             </button>
             <span class="json-file" v-if="imported" :title="imported">{{ imported }}</span>
             <span class="json-spacer" />
+            <span v-if="dirty && !showJson" class="json-dirty">有改动没应用</span>
             <span class="status" :class="testKind">{{ testMsg }}</span>
             <button class="btn sm" :disabled="testing" @click="test">
               {{ testing ? '测试中…' : '测试连接' }}
@@ -786,8 +620,114 @@ const dirLabel = computed(() => {
           <div v-if="applyMsg" class="act-row">
             <span class="status" :class="applyKind">{{ applyMsg }}</span>
           </div>
+        </div>
 
-          <p v-if="jsonSummary && chain.length > 1" class="chain-hint sjson-sum">{{ jsonSummary }}</p>
+        <!-- ---------- 二、再加一个 ---------- -->
+        <div class="sect">
+          <div class="sect-head">
+            <h3>再加一个</h3>
+            <p>名字你自己起。写清是哪家的、走哪个中转 —— 出了事，认得出是哪一个。</p>
+          </div>
+
+          <div class="sform">
+            <div class="cfg-row">
+              <div class="cfg-label">
+                <span>叫它什么</span>
+                <small>只给自己看。比如「DeepSeek（中转站）」</small>
+              </div>
+              <input
+                v-model.trim="f.name"
+                class="cfg-text"
+                placeholder="DeepSeek（中转站）"
+                spellcheck="false"
+              />
+            </div>
+
+            <div class="cfg-row">
+              <div class="cfg-label">
+                <span>哪一家</span>
+                <small>走中转站就选「自定义」，地址自己填</small>
+              </div>
+              <select class="cfg-select" :value="f.preset" @change="pickF($event.target.value)">
+                <option value="">选一家…</option>
+                <option v-for="p in presets" :key="p.id" :value="p.id">
+                  {{ p.name }}{{ p.custom ? '（自己填地址）' : p.noKey ? '（不用 key）' : '' }}
+                </option>
+              </select>
+            </div>
+
+            <div v-if="fPreset && fPreset.custom" class="cfg-row">
+              <div class="cfg-label">
+                <span>接口地址</span>
+                <small>任何说 OpenAI 兼容接口的服务，地址里一般带 /v1</small>
+              </div>
+              <input
+                v-model.trim="f.baseUrl"
+                class="cfg-text"
+                placeholder="https://"
+                spellcheck="false"
+              />
+            </div>
+
+            <div v-if="fPreset && fNeedsKey" class="cfg-row">
+              <div class="cfg-label">
+                <span>API Key</span>
+                <small>
+                  <a v-if="fPreset.keyUrl" class="slink" @click.prevent="openKey(fPreset.keyUrl)">
+                    去 {{ fPreset.name }} 拿一个
+                  </a>
+                  <span v-else>存在本机 config.json，权限 600，不会发到别处</span>
+                </small>
+              </div>
+              <input
+                v-model.trim="f.apiKey"
+                class="cfg-text"
+                type="password"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="sk-…"
+              />
+            </div>
+
+            <div v-if="fPreset && fModels.length" class="cfg-row">
+              <div class="cfg-label">
+                <span>用哪个模型</span>
+                <small>排在最前面的是默认。越往后越强，也越贵</small>
+              </div>
+              <div class="smodels">
+                <button
+                  v-for="m in fModels"
+                  :key="m.id"
+                  class="smodel"
+                  :class="{ on: fModelId === m.id }"
+                  @click="f.model = m.id; f.typed = ''"
+                >
+                  <span class="smodel-name">{{ m.name }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div v-if="fPreset" class="cfg-row">
+              <div class="cfg-label">
+                <span>目录里没有</span>
+                <small>它新发的模型名，直接写在这儿，优先于上面的选择</small>
+              </div>
+              <input
+                v-model.trim="f.typed"
+                class="cfg-text"
+                :placeholder="fModels[0]?.id || '模型名'"
+                spellcheck="false"
+                @keydown.enter.prevent="addEntry"
+              />
+            </div>
+
+            <div class="sact">
+              <button class="btn primary sm" :disabled="fBusy || !fPreset" @click="addEntry">
+                {{ fBusy ? '加中…' : '加进去' }}
+              </button>
+              <span v-if="fMsg" class="status" :class="fKind">{{ fMsg }}</span>
+            </div>
+          </div>
         </div>
       </section>
 

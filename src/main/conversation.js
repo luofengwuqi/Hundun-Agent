@@ -37,6 +37,15 @@ let summary = ''
 let busy = false
 // 上一批放进 prompt 的旧事。只为看「话题换没换」，不是缓存搜索结果（D107）。
 let memoryQuilt = null
+/**
+ * 仪式期那几轮（D115）。**和 history 分开存**，只在仪式内部给判定当上文用。
+ *
+ * 为什么不合在一起：仪式走完那一刻它就是另一个人了，前面那些「■■ 待录入 ■■」
+ * 不该进馄饨的上下文 —— 它会学着自己上一轮也在打乱码。他答过的东西在 USER.md 里，
+ * 原话在 chat 日志里，这一段丢掉不损失任何东西。它也不落盘：重启后仪式要么还在
+ * （重问一遍，反正档案里有的一格不会再问），要么已经结束（这段本来就该忘）。
+ */
+let ritualHistory = []
 
 function sessionFile() {
   return path.join(life.lifeDir(), SESSION_FILE)
@@ -130,7 +139,14 @@ function resetSession() {
 }
 
 function state() {
-  return { history: history.map((m) => ({ role: m.role, content: m.content })), summary, busy }
+  return {
+    history: history.map((m) => ({ role: m.role, content: m.content })),
+    summary,
+    busy,
+    // D112：界面靠它判断「仪式刚走完」——上一轮 pending 为 true、这一轮 false 就放过场。
+    // 放在 state 里而不是单独开一条通道：界面本来每轮都要问一次状态，多一个字段不算事。
+    ritual: life.ritualState()
+  }
 }
 
 /**
@@ -298,7 +314,7 @@ async function recall(text) {
 }
 
 function totalTokens() {
-  const sys = life.buildSystemPrompt({ summary })
+  const sys = life.buildPrompt({ summary })
   let n = life.estimateTokens(sys)
   for (const m of history) n += life.estimateTokens(m.content)
   return n
@@ -350,21 +366,121 @@ async function maybeCompact(myEpoch) {
 }
 
 /**
+ * 仪式期的一轮（D115）。
+ *
+ * 他和我们最后定下来的分工：**可见的每一句都是现成的**，模型只回答「这一格填上了没有」。
+ * 它没有说话的出口 —— 这里只取它输出里的 `<slot>` 标记，其余字符一律丢弃。
+ *
+ * 两个理由，第二个更重要：
+ * 1. 语气稳定。上一版让模型自己造句，它写的是「我这边还是空的，先问一件最简单的」——
+ *    人味就是从这类句子漏进来的，无论加多少条禁令都会漏。
+ * 2. 仪式期的对话**不进主 history**。走完那一刻它就是另一个人了，
+ *    「我上一轮在打乱码」不该出现在馄饨的上下文里。他答过的东西已经进了 USER.md，
+ *    原话进了 chat 日志和当天日记，所以丢掉这一段不损失任何东西。
+ */
+async function ritualTurn({ text, internal, myEpoch }) {
+  const cfg = store.read()
+  const slot = life.ritualSlot()
+
+  if (!internal) {
+    // 原话照旧落盘（P-07／D028）——「他到底说过什么」不能因为这是仪式就少一份。
+    life.appendChat('user', text)
+    try {
+      life.appendDiary(text)
+    } catch {}
+    search.rebuild().catch(() => {})
+  }
+
+  // 它自己开口那一轮：没有可判定的内容，直接给第一格。
+  if (internal) {
+    const reply = life.ritualReply({ kind: 'boot', slot })
+    ritualHistory.push({ role: 'assistant', content: reply })
+    return { text: reply, raw: reply, notes: 0, written: [], ritual: life.ritualState() }
+  }
+
+  // 判定。任何失败（没配 key、网络、模型乱写）都当成 skip ——
+  // 代价是同一格再问一遍，收益是**永远不会把编的话写进他的档案**。
+  let verdict = { kind: 'skip' }
+  if (slot && cfg.apiKey && String(cfg.apiKey).trim()) {
+    try {
+      const { text: raw } = await llm.chat({
+        chain: cfg.modelChain,
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        // 温度 0：这一格填没填上是事实判断，不是创作。
+        temperature: 0,
+        maxTokens: 80,
+        messages: [
+          { role: 'system', content: life.buildRitualPrompt() },
+          ...ritualHistory.slice(-4),
+          { role: 'user', content: text }
+        ]
+      })
+      verdict = life.parseVerdict(raw, slot.key)
+    } catch {
+      verdict = { kind: 'skip' }
+    }
+  }
+
+  if (session.isStale(myEpoch)) return { dropped: true, text: '' }
+
+  if (verdict.kind === 'fill') {
+    try {
+      life.ingestProfile([verdict.key + '｜' + verdict.value])
+    } catch {}
+  }
+
+  let done = false
+  if (verdict.kind === 'end') {
+    life.endRitual()
+    done = true
+  } else if (life.retireBootstrapIfDone()) {
+    // 够格了（三个主题、且必须有「称呼」）—— 软件自己收尾，不问他。
+    done = true
+  } else if (verdict.kind === 'skip' && slot) {
+    // 同一句话问三遍还问不出来，换下一格。仪式是给他用的，不是考他。
+    if (life.noteSkip(slot.key) >= 3) life.skipSlot(slot.key)
+  }
+
+  const next = done ? null : life.ritualSlot()
+  const kind = done ? (verdict.kind === 'end' ? 'end' : 'fill') : verdict.kind
+  const reply = life.ritualReply({ kind, slot: next })
+  ritualHistory.push({ role: 'assistant', content: reply })
+
+  return {
+    text: reply,
+    raw: reply,
+    notes: 0,
+    written: [],
+    ritual: life.ritualState()
+  }
+}
+
+/**
  * 跑一轮对话。
  * @param {string} text 用户输入（或"它自己开口"的内部指令）
  * @param {object} hooks { onDelta, onCompact, internal }
  */
 async function send(text, hooks = {}) {
   const cfg = store.read()
-  if (!cfg.apiKey || !String(cfg.apiKey).trim()) {
-    throw new Error('还没有填 API Key。点右上角设置，填上再聊。')
-  }
 
   // 出发时的身份。这一轮结束前若身份变了，结果一律丢弃——
   // 不 push 历史、不写记忆、不回显（F13-06）。
   const myEpoch = session.current()
   busy = true
   try {
+    // D115：仪式期整条走另一套（固定话术 + 判定），连 API Key 都不强求 ——
+    // 第一句「系统初始化」是现成的字，不该因为没填 key 就开不了机。
+    life.retireBootstrapIfDone()
+    if (life.bootstrapPending()) {
+      return await ritualTurn({ text, internal: !!hooks.internal, myEpoch })
+    }
+
+    if (!cfg.apiKey || !String(cfg.apiKey).trim()) {
+      throw new Error('还没有填 API Key。点右上角设置，填上再聊。')
+    }
+
     const compacted = await maybeCompact(myEpoch)
     if (session.isStale(myEpoch)) return { dropped: true, text: '' }
     if (compacted && hooks.onCompact) hooks.onCompact(compacted)
@@ -392,7 +508,7 @@ async function send(text, hooks = {}) {
     // 这类判据就被块标签遮住了（真机问卷感的一个来源）。memgate 判定用原始文本，不受影响。
     const stripBlocks = (c) => String(c || '').replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim()
     const messages = [
-      { role: 'system', content: life.buildSystemPrompt({ summary, recalled }) },
+      { role: 'system', content: life.buildPrompt({ summary, recalled }) },
       ...history.slice(-48).map((m) => ({ role: m.role, content: m.role === 'assistant' ? stripBlocks(m.content) : m.content }))
     ]
     if (hooks.internal) messages.push({ role: 'user', content: text })
@@ -457,7 +573,9 @@ async function send(text, hooks = {}) {
     history.push({ role: 'assistant', content: finalText })
     if (history.length > 80) history = history.slice(-60)
 
-    return { text: finalText, raw, notes: notes.length, written }
+    // ritual：这一轮说完之后仪式还在不在。界面拿它和上一轮比，
+    // true→false 就是「刚走完」，放那一屏过场（D112）。
+    return { text: finalText, raw, notes: notes.length, written, ritual: life.ritualState() }
   } finally {
     // 只清自己那一代的锁。身份已经换过的话，这把锁现在属于下一个请求，
     // 在这里清掉会让两个请求同时跑（同一个「不报错只是行为错」的坑）。

@@ -126,7 +126,11 @@
 | **改完提示词要清 `.session.json` 再看效果** | `history` 是 `conversation.js` 的模块内变量，只在启动时读一次文件；里面若已有八条旧腔的对话，模型会顺着写下去，新规则压不过眼前惯性（D093）。**「还是冷」有两个可能：规则没改对／history 在拖，症状一模一样** | `<身份目录>/.session.json`，删了要重启 |
 | 提示词里的示例**不能是它要抽取的答案** | 示例写「叫他芜柒」而抽的就是称呼，模型照抄，抽取退化成填空。一律用无关占位（「小周」）并注明不要照抄 | `memgate.js`、`TPL_BOOTSTRAP` |
 | 批量改文件的脚本必须**幂等** | 命令会被整条重跑（一天三次）：`cat >>` 追加两份、替换第二遍断言失败。改完 `grep -c` 确认无重复，别拿「断言唯一」当保险 | 一切改文档的脚本 |
+| **仪式期和主程序是两份提示词** | 分叉只在 `life.buildPrompt()`。`buildSystemPrompt()` 按定义**不含**仪式（D113），所以「改了仪式文案却拿它验」会看起来没生效；反过来在仪式期想调主程序口吻也调不到。块协议只有一份（`memoryRulesBlock()`），复制一份的症状是「记了但没落盘」，不报错 | `life.buildPrompt`／`buildRitualPrompt` |
+| 改 `TPL_SOUL`／`TPL_BOOTSTRAP` 前先把上一版**冻结成字面量** | 迁移靠「逐字等于某一版出厂」判「他动过没有」。用新模板反推旧版永远对不上，对不上不报错——**静默不升级**，真机上那份老文件从此冻结（SOUL 踩过一次，BOOTSTRAP 也有 `_V1`／`_V2`） | `SOUL_V5_PREV`／`TPL_BOOTSTRAP_V2`、`migrate*Template()` |
 | 测试分节编号是**追加型**，不按顺序排 | 加 `[3d]` 前先 `grep '\[3[a-z]\]'`；新分节与顶层 `const` 重名会让整个测试文件语法报错 | `scripts/test.mjs` |
+| **改出厂模板，必须把被替换的那一版加进历史表** | 模板只在**没有文件时**种一次，`migrateSoulTemplate`／`migrateBootstrapTemplate` 又只覆盖「逐字等于某一版历史」的文件。漏一版的后果不是报错，是那一版的**所有存量机器永远停在自己那份上**——他重启十次也不会变，看起来像「改了没用」。2026-11-08 真机踩到：上一版 SOUL（1410）从没进过 `SOUL_HISTORY`，两轮改文案全部空转 | `SOUL_HISTORY`、`TPL_BOOTSTRAP_V1`、`migrateBootstrapTemplate` |
+| **改完提示词要确认 `out/` 真的更新了，并且他重启过窗口** | Electron 启动时 `require` 一次，之后 build 不影响正在跑的实例。判据是产物里能不能搜到新句（注意 esbuild 会把中文转成 `\uXXXX`，`grep 中文` 恒为 0，要解码后再搜） | `out/main/index.js` |
 
 ### 跑起来
 

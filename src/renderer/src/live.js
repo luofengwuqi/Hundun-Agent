@@ -20,6 +20,14 @@ import { renderMarkdown } from './markdown.js'
 export const WAIT_TEXT = '在想'
 
 /**
+ * 仪式期的等待文案（D115）。
+ *
+ * 那几轮根本没有模型在「想」—— 话是现成的，只有一次判定要等。
+ * 显示「在想」等于让装程序用馄饨的口吻说话，正是这次要拿掉的东西。
+ */
+export const WAIT_RITUAL = '■■ 初■始■化■中 ■■'
+
+/**
  * 是不是「它在想」的那一刻。
  *
  * 判据只有一条：**还没有可见内容**。不引入时间阈值——
@@ -38,9 +46,10 @@ export function isThinking(m) {
 export function liveHtml(m) {
   if (!m) return ''
   if (isThinking(m)) {
+    const text = m.ritual ? WAIT_RITUAL : WAIT_TEXT
     return (
       '<span class="thinking">' +
-      WAIT_TEXT +
+      text +
       '<span class="dots"><i></i><i></i><i></i></span></span>'
     )
   }

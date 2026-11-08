@@ -31,6 +31,16 @@ const scroller = ref(null)
 const inputEl = ref(null)
 const liveIdx = ref(-1)
 
+/**
+ * 仪式过场（D112）。
+ *
+ * `ritualPending` 是上一轮的仪式状态；`ceremony` 非空就是那一屏正在放。
+ * 判据只有一个：**上一轮 true、这一轮 false**。别用「刚启动」或「消息条数」去猜——
+ * 那两种在重启、清空、切身份之后全都会误判。
+ */
+const ritualPending = ref(false)
+const ceremony = ref(null)
+
 /* ---------- 渲染 ---------- */
 
 function scrollBottom() {
@@ -50,7 +60,10 @@ function sanitizeLive(t) {
 
 function startLive() {
   if (liveIdx.value >= 0) return
-  messages.value.push({ role: 'assistant', content: '', raw: '', live: true })
+  // D115：仪式期这几条不是馄饨说的 —— 装程序这会儿还没「他」这个人。
+  // 标记打在消息上而不是全局判断：仪式走完那一刻后面还有几条是仪式期的尾巴，
+  // 它们也不该突然长出馄饨的头像。
+  messages.value.push({ role: 'assistant', content: '', raw: '', live: true, ritual: ritualPending.value })
   liveIdx.value = messages.value.length - 1
 }
 
@@ -122,6 +135,8 @@ async function send(text) {
     } else {
       finalize(messages.value[liveIdx.value]?.content || '')
     }
+    // 这一轮说完，仪式可能刚走完 —— 交给 syncRitual 判，别在这里判
+    syncRitual(res && res.ritual)
   } catch (e) {
     finalize('')
     notice.value = String(e.message || e)
@@ -291,11 +306,73 @@ async function opening() {
     const res = await window.hundun.chat.send('__opening__')
     if (res && res.text) finalize(res.text)
     else finalize('')
+    syncRitual(res && res.ritual)
   } catch {
     finalize('')
   } finally {
     streaming.value = false
   }
+}
+
+/* ---------- 仪式过场（D112） ---------- */
+
+let ceremonySeq = 0
+let ceremonyTimers = []
+
+function sleep(ms) {
+  return new Promise((r) => ceremonyTimers.push(setTimeout(r, ms)))
+}
+
+/**
+ * 逐字打出来。节奏是刻意不均匀的：逗号后停一下，整行打完停更久。
+ * 均匀的节奏像进度条，不均匀的才像有人在打字。
+ */
+async function playCeremony(lines) {
+  const text = Array.isArray(lines) ? lines.filter((l) => typeof l === 'string' && l) : []
+  if (!text.length) return
+  const my = ++ceremonySeq
+  ceremony.value = { boot: true, lines: text, typed: text.map(() => ''), out: false }
+
+  await sleep(1100)
+  if (my !== ceremonySeq) return
+  ceremony.value.boot = false
+  await sleep(320)
+
+  for (let i = 0; i < text.length; i++) {
+    const chars = Array.from(text[i])
+    for (let k = 0; k < chars.length; k++) {
+      if (my !== ceremonySeq) return
+      ceremony.value.typed[i] = chars.slice(0, k + 1).join('')
+      await sleep(chars[k] === '，' ? 190 : 86)
+    }
+    await sleep(420)
+  }
+
+  await sleep(1900)
+  if (my !== ceremonySeq) return
+  endCeremony()
+}
+
+/** 点一下也能跳过——他要是没耐心看完，这屏不该扣着他 */
+function endCeremony() {
+  if (!ceremony.value || ceremony.value.out) return
+  ceremonySeq++
+  ceremonyTimers.forEach((t) => clearTimeout(t))
+  ceremonyTimers = []
+  ceremony.value.out = true
+  ceremonyTimers.push(
+    setTimeout(() => {
+      ceremony.value = null
+    }, 640)
+  )
+}
+
+/** 主进程给的仪式状态，和上一轮比一次 */
+function syncRitual(next) {
+  if (!next || typeof next.pending !== 'boolean') return
+  const was = ritualPending.value
+  ritualPending.value = next.pending
+  if (was && !next.pending) playCeremony(next.welcome)
 }
 
 /* ---------- 事件 ---------- */
@@ -352,8 +429,16 @@ onMounted(async () => {
     view.value = 'settings'
   } else {
     const st = await window.hundun.chat.state()
+    // 只记状态，不放动画：重启时仪式早就走完的机器不该每次开机都过一遍场
+    ritualPending.value = !!(st.ritual && st.ritual.pending)
     if (st.history && st.history.length) {
-      messages.value = st.history.map((m) => ({ role: m.role, content: m.content }))
+      // 仪式还没走完的时候，恢复出来的这几条必然属于仪式期（那时的会话只可能是仪式），
+      // 一并打上标记 —— 否则旧机器上那几条乱码会顶着馄饨的头像显示（D115）。
+      messages.value = st.history.map((m) => ({
+        role: m.role,
+        content: m.content,
+        ritual: ritualPending.value && m.role !== 'user'
+      }))
       scrollBottom()
     } else {
       opening()
@@ -368,6 +453,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="shell">
+    <!-- 仪式走完那一屏（D112）。盖在整窗上面，**不删任何一条消息** ——
+         它只是盖住，放完自己淡出。点一下能跳过：他没耐心看完的话，这屏不该扣着他。 -->
+    <div v-if="ceremony" class="ceremony" :class="{ out: ceremony.out }" @click="endCeremony">
+      <div v-if="ceremony.boot" class="ceremony-boot">系统初始化成功<i>✓</i></div>
+      <div v-else class="ceremony-lines">
+        <p v-for="(l, i) in ceremony.lines" :key="i">{{ ceremony.typed[i] }}</p>
+      </div>
+    </div>
+
     <header class="titlebar">
       <div class="brand">
         <img class="mark" :src="LOGO" alt="" draggable="false" />
@@ -479,8 +573,10 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-for="(m, i) in messages" :key="i">
-            <div class="msg" :class="{ me: m.role === 'user' }">
-              <div v-if="m.role !== 'user'" class="avatar">
+            <div class="msg" :class="{ me: m.role === 'user', sys: m.ritual }">
+              <!-- 仪式期不戴馄饨的头像（D115）：那几轮是装程序在说话，
+                   顶着馄饨的脸说「■■ 需要你回答 ■■」是把两个人当成一个人 -->
+              <div v-if="m.role !== 'user' && !m.ritual" class="avatar">
                 <img :src="LOGO" alt="馄饨" draggable="false" />
               </div>
               <div class="content">

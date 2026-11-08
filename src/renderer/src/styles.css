@@ -1807,82 +1807,55 @@ textarea::placeholder {
 }
 
 /* ============================================================
-   简单模式（D077）：选一家、选一个、填个 key。
-   卡片复用「模型链」那一套 .mcard —— 同一件事在两种写法下应该长得一样，
-   否则切一下栏就像换了个应用。
+   模型这一栏拆成两段（D110）：上面是清单，下面是「再加一个」。
+   两段之间不给分割线，靠小标题和留白分开 —— 它们是同一件事的两半，
+   不是两个栏目。原来那套「简单／直接写 JSON」的两栏切换连同它的
+   服务商方按钮一起删了：清单已经占了视觉重量，下面再铺一排方按钮
+   就等于把这一页变成第二个首页。
    ============================================================ */
 
-/* 两栏切换：做成扁平的 segmented，不要抢走上面 h2 的注意力 */
-.switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  margin-bottom: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-deep);
+.sect + .sect {
+  margin-top: 24px;
 }
 
-.switch button {
-  border: 0;
-  background: transparent;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: 12.5px;
-  line-height: 1.6;
-  padding: 3px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+.sect-head {
+  margin-bottom: 10px;
 }
 
-.switch button:hover {
-  color: var(--ink);
-}
-
-.switch button.on {
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: var(--shadow-card);
-}
-
-/* 服务商：一排方按钮。不用下拉框 —— 第一次用的人得先看见都有哪些家 */
-.sgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px;
-}
-
-.sprov {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  text-align: left;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 9px 11px;
-  font: inherit;
-  cursor: pointer;
-  box-shadow: var(--shadow-card);
-  transition: border-color 0.14s, transform 0.14s;
-}
-
-.sprov:hover {
-  border-color: #d6c39c;
-  transform: translateY(-1px);
-}
-
-.sprov-name {
+.sect-head h3 {
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.03em;
   color: var(--ink);
 }
 
-.sprov-meta {
-  font-size: 11.5px;
+.sect-head p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.75;
   color: var(--ink-3);
+}
+
+/* 服务商选一个：下拉框。清单在上面，这里不需要再把八家铺开 */
+.cfg-select {
+  flex: 0 0 auto;
+  width: 220px;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 9px;
+  outline: none;
+  cursor: pointer;
+}
+
+.cfg-select:focus {
+  border-color: #d6c39c;
+  background: var(--panel);
 }
 
 /* 表单：和设置页的 cfg-row 保持一致的行高与对齐 */
@@ -1951,12 +1924,6 @@ textarea::placeholder {
   color: var(--ink-3);
 }
 
-.sadd {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .sact {
   display: flex;
   align-items: center;
@@ -1964,34 +1931,86 @@ textarea::placeholder {
   margin-top: 12px;
 }
 
+/* 原来用 border-bottom 画虚线。inline 元素的边框画在内容盒底边 ——
+   11.5px 的字，那条线正好从 y 的尾巴上穿过去，看起来像和上一行的标签叠在一起。
+   text-decoration 才是落在字下面的那根线。 */
 .slink {
   color: var(--accent);
-  text-decoration: none;
-  border-bottom: 1px dashed currentColor;
+  text-decoration: underline dotted;
+  text-underline-offset: 2.5px;
+  text-decoration-thickness: 1px;
   cursor: pointer;
 }
 
-/* 下面那份 JSON 里排了备用链时，这里只画第一个 —— 说一句，别让人以为备份没了 */
-.smulti {
-  display: block;
-  margin: 10px 0 0;
-  line-height: 1.75;
-}
-
-/* 一份没改过的简单配置：JSON 自己看是算得出来的（地址、模型都对得上），
-   跟他解释一遍只会让他以为这里还有别的事 */
-.squiet {
+/* ── 仪式过场（D112）──
+   仪式走完那一屏：盖住整窗、放完淡出。不删消息，只盖住。
+   用衬线是因为这一屏是**一句话**，不是界面 —— 它只在人生里出现一次。 */
+.ceremony {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 9px 11px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  color: var(--ink-3);
-  font-size: 12px;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--ink);
+  opacity: 1;
+  transition: opacity 0.62s ease;
+  cursor: pointer;
 }
 
-.sjson-sum {
-  margin: 10px 0 0;
+.ceremony.out {
+  opacity: 0;
+}
+
+.ceremony-boot {
+  font-family: ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  color: var(--ink-2);
+  animation: ceremony-dim 0.9s steps(2, end) 2;
+}
+
+.ceremony-boot i {
+  font-style: normal;
+  color: var(--accent);
+  margin-left: 0.45em;
+}
+
+.ceremony-lines {
+  text-align: center;
+}
+
+.ceremony-lines p {
+  margin: 0;
+  min-height: 2.1em;
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 2.1;
+  letter-spacing: 0.04em;
+}
+
+@keyframes ceremony-dim {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ceremony,
+  .ceremony-boot {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* 仪式期（D115）：那几轮是装程序在说话，不是馄饨。
+   没有头像，但文字留在有头像时的起始位置 —— 否则同一个对话里每换一次说话人，
+   左边就跳 40px，读起来像排错了版。 */
+.msg.sys .content {
+  padding-left: 40px;
 }

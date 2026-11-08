@@ -65,8 +65,8 @@ ok(prompt.includes('MEMORY.md'), '提示里包含 MEMORY')
 ok(prompt.includes('记忆规则'), '提示里包含记忆规则')
 ok(prompt.includes('<longterm>'), '提示声明了 longterm 块')
 ok(
-  prompt.includes('## Bootstrap Pending') && prompt.includes('怎么称呼他'),
-  '档案为空时注入首次见面仪式'
+  life.buildPrompt({}).includes('判定器') && life.buildPrompt({}).includes('<slot>skip</slot>'),
+  '档案为空时 buildPrompt 走仪式那份（D115：模型只做判定，话是现成的）'
 )
 ok(prompt.includes(life.dateStr()), '提示里带上了今天日期')
 
@@ -411,6 +411,8 @@ searchMod.search = async () => []
 
 paths.setContext({ userId: '111', agentId: 'hundun' })
 life.ensureLife()
+// D115：仪式期整条走固定话术，这里验的是会话与身份隔离，先把仪式收掉。
+life.endRitual()
 const dirA = life.lifeDir()
 const pending = conversation.send('我是上一个人')
 
@@ -441,6 +443,7 @@ ok(!chatB.includes('我是上一个人'), '上一个身份的话也不在新身�
 
 // 正常路径不受影响：没切身份时，记忆照常落盘
 life.ensureLife()
+life.endRitual()
 const p2 = await conversation.send('我是当前这个人')
 ok(p2 && !p2.dropped && p2.text.length > 0, '没有切换时请求正常完成')
 const memNow = fs.readFileSync(path.join(life.lifeDir(), 'memory', life.dateStr() + '.md'), 'utf8')
@@ -473,6 +476,7 @@ searchMod.search = async () => []
 
 paths.setContext({ userId: 'local', agentId: 'hundun' })
 life.ensureLife()
+life.endRitual()
 conversation.resetSession()
 
 await conversation.send('第一句')
@@ -987,7 +991,7 @@ ok(mm.configToSimple(MODEL_OK) === null, '手写的 JSON（没有 x-hundun.simpl
 const sSwitch = mm.simpleToConfig({ preset: 'moonshot', apiKey: 'sk-simple', model: '' }, { baseDir: cfgDir })
 ok(sSwitch.provider.moonshot.options.baseURL === 'https://api.moonshot.cn/v1', '换一家，地址自动换成那家的')
 ok(!Object.keys(sSwitch.provider).includes('deepseek'), '旧的服务商不留在配置里：留着的话 key 该填在哪就说不清了')
-ok(sSwitch.model === 'moonshot/kimi-k2-0905-preview', '没选模型时用目录里第一个')
+ok(sSwitch.model === 'moonshot/kimi-k3.1-pro', '没选模型时用目录里第一个')
 
 // 手填目录外的模型名：允许，但不编一个上下文长度出来
 const sExtra = mm.simpleToConfig({ preset: 'deepseek', apiKey: 'k', model: 'deepseek-chat-v9' }, { baseDir: cfgDir })
@@ -1020,9 +1024,15 @@ ok(store.publicConfig().modelSimple.preset === 'qwen', '界面下次打开还是
 ok(!('baseUrl' in sDisk) && !('apiKey' in sDisk), '派生值照旧不落盘')
 
 // 只改 key：不能把备用链的顺序一起冲掉
+// 两个模型名显式写进 models 字典，不借目录里的：目录会过期，上游下架一个模型
+// 就会让这条断言红掉 —— 而红的并不是它要测的东西（key 改动伤不伤备用链）。
 const sChainCfg = JSON.parse(JSON.stringify(sEnv))
-sChainCfg['x-hundun'].modelOrder = ['deepseek/deepseek-chat', 'deepseek/deepseek-reasoner']
-sChainCfg.model = 'deepseek/deepseek-chat'
+sChainCfg.provider.deepseek.models = {
+  'chain-a': { name: 'A', limit: { context: 128000 } },
+  'chain-b': { name: 'B', limit: { context: 128000 } }
+}
+sChainCfg['x-hundun'].modelOrder = ['deepseek/chain-a', 'deepseek/chain-b']
+sChainCfg.model = 'deepseek/chain-a'
 store.write({ modelConfig: sChainCfg })
 store.setApiKey('sk-new')
 ok(store.read().modelChain.length === 2, '换 key 不动备用链（冲掉的话，主模型一挂就没人接）')
@@ -1231,21 +1241,22 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   life.ensureLife()
   ok(life.bootstrapPending(), '全新的生活目录会种一份 BOOTSTRAP.md')
 
+  // D112：仪式走的是**另一个程序**，所以这一节分两份拿：
+  // bsFirst = 主程序（馄饨），bsRitual = 仪式期那个安装程序。
+  // D115 之后仪式那份已经**不含任何可显示的字**了：可见的话全在 RITUAL_SLOTS 里，
+  // 模型只回一个判定标记。所以这里验的是话术和判定协议，不是提示词段落顺序。
   const bsFirst = life.buildSystemPrompt()
-  ok(bsFirst.includes('## Bootstrap Pending'), '第一轮提示词里有 Bootstrap Pending 段')
-  ok(bsFirst.includes('这是仪式，不是关卡'), '带着「别挡在正事前面」这条')
-  ok(bsFirst.includes('一次只问一个问题'), '带着「一次只问一个」')
+  const bsRitual = life.buildPrompt()
 
-  // 顺序照 openclaw：命令在前，文件紧随其后（不是命令在末尾、文件在中间）
-  const iPending = bsFirst.indexOf('## Bootstrap Pending')
-  const iCtx = bsFirst.indexOf('# Project Context')
-  const iRitual = bsFirst.indexOf('## BOOTSTRAP.md（照上面那节走）')
-  ok(iPending > 0 && iPending < iCtx, 'Bootstrap Pending 在 Project Context 之前')
-  ok(iRitual > iCtx, 'BOOTSTRAP.md 全文是 Project Context 里的一个文件')
-  ok(
-    iRitual - iPending > 0 && iRitual - iPending < 4200,
-    '命令和它的文件之间隔着 AGENTS/SOUL/IDENTITY/USER —— 与 openclaw 的 CONTEXT_FILE_ORDER 一致'
-  )
+  const boot = life.ritualReply({ kind: 'boot', slot: life.RITUAL_SLOTS[0] })
+  ok(boot.includes('初■■始化'), '开场是现成的系统话术（不经模型造句）')
+  ok(boot.includes('怎么称呼你'), '开场直接问第一格，不寒暄')
+  ok(!boot.includes('我'), '开场里没有「我」—— 装程序不自称（D115 要的人机感就靠这条）')
+
+  ok(bsRitual.includes('判定器'), '仪式期模型拿到的是一份判定器提示词')
+  ok(bsRitual.includes('不会显示给人看'), '写死「你说的字不会显示」，否则它会开始说话')
+  ok(bsRitual.includes('<slot>skip</slot>') && bsRitual.includes('<slot>end</slot>'), '三种判定都给了')
+  ok(!bsRitual.includes('Interaction Style') && !bsRitual.includes('SOUL'), '判定器不带人格层')
 
   // D096：关于他的条目单独成段，放在 Project Context **之前**
   // —— openclaw 的 USER.md 是「session 开始时单独加载、独立小预算」，不跟别的文件挤在一起。
@@ -1253,7 +1264,7 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
     const iHim = bsFirst.indexOf('## 他（你手上关于他的全部）')
     const iRun = bsFirst.indexOf('## Runtime Context')
     ok(iHim > iRun, '「他」那节在 Runtime Context 之后')
-    ok(iHim > 0 && iHim < iCtx, '「他」那节在 Project Context 之前（注意力更强的一端）')
+    ok(iHim > 0 && iHim < bsFirst.indexOf('# Project Context'), '「他」那节在 Project Context 之前（注意力更强的一端）')
     ok(bsFirst.includes('还什么都不知道'), '新档案时明说「还什么都不知道」，不是空着一片')
     // 全新目录的日记是空模板，不该被当成「有记录」注进去
     ok(!bsFirst.includes('## ' + life.dateStr()), '空日记不注入（只有 frontmatter 和标题）')
@@ -1291,7 +1302,7 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
       bsFirst.indexOf('## SOUL.md（你是谁、怎么说话）'),
     'AGENTS.md 排在 SOUL 之前（agents=10 < soul=20，先有目的再有人格）'
   )
-  ok(bsFirst.includes('第一句可见回复必须照 BOOTSTRAP.md'), '命令里写死「第一句必须照它来」')
+  ok(bsRitual.includes('<slot>' + life.RITUAL_SLOTS[0].key + '|'), '判定标记里带着当前格的主题（写错栏位就落错地方）')
   ok(bsFirst.includes('## Care'), '有 Care 段（行为合同，不放在他改得动的 SOUL 里）')
   ok(
     bsFirst.includes('不许推断') && bsFirst.includes('那是查档案，不是聊天'),
@@ -1351,30 +1362,44 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
     life.buildSystemPrompt().indexOf('接住他') < life.buildSystemPrompt().indexOf('理清思路'),
     '定位句里「接住」排在「理清思路」前面（三个任务不再并列）'
   )
-  ok(life.TPL_BOOTSTRAP.includes('就别走下一格'), '带情绪的那轮不换格（仪式可以停在原地）')
-  ok(life.TPL_BOOTSTRAP.includes('不必每轮都以问号结尾'), '仪式里也允许不给问题，口径与风格段一致')
+  // 真机 22:34／22:36 那三句原话，逐条对上之后的补丁。三句都不是「理性」，
+  // 是同一件事的三个面：拿钟表起头、汇报记忆、把球推回去。
+  // D115 之后「别拿时间当招呼」从文案判据变成了**结构判据**：
+  // 判定器的提示词里根本没有当前时间，也没有可抄的示例。
+  ok(!life.buildRitualPrompt().includes('这个点了'), '仪式程序拿不到时刻，也没有可抄的示例（D059）')
+  ok(!life.buildRitualPrompt().includes('Runtime Context'), '判定器没有 Runtime Context 段 —— 时间从源头就断了')
+  ok(bsFirst.includes('不把球推回去'), '「要我怎么配合直接说」被点名（把选择权还给他＝没在场）')
+  ok(bsFirst.includes('不汇报你记了什么'), '「名字落我这儿了」被点名（记忆不是进度汇报）')
+  ok(
+    life.SOUL_HISTORY.at(-1).includes('里面这层：理性'),
+    '历史表最后一格是 D108 之前那版（含理性层）——漏掉它，装那版的机器永远升不上来'
+  )
+  ok(
+    life.ritualReply({ kind: 'skip', slot: life.RITUAL_SLOTS[0] }).includes('未接上'),
+    '他绕开时只说信号没接上，不判他错（也不说「回答无效」）'
+  )
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
 
   life.ingestProfile(['称呼｜叫他老吴'])
   ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
 
   // 实测踩到的：档案一记上「称呼」就不再是空的，如果注入判据写成
-  // `isProfileEmpty()`，第一条答完仪式就整个消失，剩下四个问题永远不问。
-  // 注入判据必须是「文件还在不在」，和完成判据（五条）是同一个开关。
+  // `isProfileEmpty()`，第一条答完仪式就整个消失，剩下几格永远不问。
+  // 注入判据必须是「文件还在不在」，和完成判据是同一个开关。
   ok(!life.isProfileEmpty(), '记了一件之后档案已经不是空的')
-  const bsMid = life.buildSystemPrompt()
-  ok(bsMid.includes('## Bootstrap Pending'), '只答了一件，仪式**还在**（不能因为档案不空就停）')
-  ok(bsMid.includes('## BOOTSTRAP.md（照上面那节走）'), '仪式文件也还在上下文里')
+  const bsMid = life.buildRitualPrompt()
+  ok(bsMid.includes('主题：在做'), '只答了一件：下一格是「在做」，不会重问称呼')
+  ok(!bsMid.includes('主题：称呼'), '已经答过的那格不再问（按档案判断，不靠游标）')
 
-  // 判据从「五条活的话」改成「五个不同主题」。带主题的条目会互相顶替
-  // （同一主题只留一条），不带主题的却能一条条堆 —— 三句「别用 emoji」
-  // 就能把五条配额填满，而作息、在意、红线一句没问，仪式照样关门。
-  life.ingestProfile(['在做｜写代码', '喜欢｜周末骑车', '性子｜话少，被追问会烦', '作息｜十一点后别找我'])
-  ok(life.bootstrapDone(), '五个不同主题各一条，就算走完')
+  // 判据从「五条活的话」改成「不同主题各一条」，D113 再把门槛降到三格。
+  life.ingestProfile(['在做｜写代码'])
+  ok(!life.bootstrapDone(), '两格还不够（门槛三个主题）')
+  life.ingestProfile(['红线｜别提家里的事'])
+  ok(life.bootstrapDone(), '三格且含「称呼」→ 算走完（D113 的 5 → 3）')
 
   const bsDone = life.buildSystemPrompt()
-  ok(!life.bootstrapPending(), '走完的当轮就把文件删了')
-  ok(!bsDone.includes('BOOTSTRAP.md（第一次见他'), '删了之后提示词里不再有仪式')
+  ok(!life.bootstrapPending(), '走完的当轮就把文件删了（retireBootstrapIfDone）')
+  ok(life.ritualState().pending === false, '仪式状态同步成「已走完」—— 界面靠它放过场')
 
   life.ensureLife()
   ok(!life.bootstrapPending(), '重启也不会再种回来')
@@ -1985,8 +2010,8 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
   life.ensureLife()
   ok(life.bootstrapPending(), '老目录 + 空档案 → 补种一次仪式（今天没被问的成因就是这个）')
   ok(
-    life.buildSystemPrompt().includes('## Bootstrap Pending'),
-    '补种的仪式当轮就进了提示词'
+    life.buildPrompt().includes('判定器') && life.ritualSlot().key === '称呼',
+    '补种的仪式当轮就进去了：判定器 + 第一格是「称呼」'
   )
 
   // 他删掉 = 别再问了。标记记着「这件事决定过」，所以重启也不补
@@ -2046,6 +2071,22 @@ console.log('\n[3m] 老目录补仪式：D078 之前建的目录也能问一次'
     '手改过但忘了记录 → 也不覆盖（不做模糊匹配）'
   )
 
+  // D108：老 BOOTSTRAP 也要能升上来。它比 SOUL 更隐蔽——模板只在**没有文件时**种一次，
+  // 已经种过的机器上那份永远不会被替换，所以改了开场文案、重启了窗口，他看到的还是旧的。
+  const bootPath = path.join(life.lifeDir(), 'BOOTSTRAP.md')
+  fs.writeFileSync(bootPath, life.TPL_BOOTSTRAP_V1, 'utf8')
+  life.ensureLife()
+  ok(
+    fs.readFileSync(bootPath, 'utf8').trim() === life.TPL_BOOTSTRAP.trim(),
+    '老 BOOTSTRAP 升到当前版（否则改了开场文案，存量机器看不到）'
+  )
+  fs.writeFileSync(bootPath, life.TPL_BOOTSTRAP_V1 + '\n- 我自己加的一格\n', 'utf8')
+  life.ensureLife()
+  ok(
+    fs.readFileSync(bootPath, 'utf8').includes('我自己加的一格'),
+    '他在仪式里写过字 → 不覆盖（那是他的仪式）'
+  )
+
   process.env.HUNDUN_LIFE_DIR = prev
 }
 
@@ -2059,24 +2100,46 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   life.ensureLife()
 
   const p = life.buildSystemPrompt()
+  // D112 之后仪式是一整个**独立程序**，所以骨架分成两份验：
+  // `p` 是主程序（馄饨），`rp` 是仪式期那个安装程序。混在一起验，
+  // 一份缺段就会误报成另一份的错。
+  const rp = life.buildRitualPrompt()
   const at = (s) => p.indexOf(s)
+  const atR = (s) => rp.indexOf(s)
   const order = (a, b, label) => ok(at(a) >= 0 && at(b) >= 0 && at(a) < at(b), label)
+  const orderR = (a, b, label) => ok(atR(a) >= 0 && atR(b) >= 0 && atR(a) < atR(b), label)
 
   // 段与段的顺序（照 src/agents/system-prompt.ts 的组装顺序）
   order('## Interaction Style', '## Execution Bias', 'Interaction Style 在 Execution Bias 之前')
   order('## Execution Bias', '## Promised Work', 'Execution Bias 在 Promised Work 之前')
   order('## Promised Work', '## Runtime Context', 'Promised Work 在 Runtime Context 之前')
-  order('## Runtime Context', '## Bootstrap Pending', 'Runtime Context 在 Bootstrap Pending 之前')
-  order('## Bootstrap Pending', '# Project Context', 'Bootstrap Pending 在 Project Context 之前')
+  order('## Runtime Context', '## 他（你手上关于他的全部）', 'Runtime Context 在「他」之前')
+  order('## 他（你手上关于他的全部）', '# Project Context', '「他」在 Project Context 之前')
   order('# Project Context', '## Care', 'Project Context 在 Care 之前')
   order('## Care', '## Memory（记忆规则）', 'Care 在记忆规则之前')
   order('## Memory（记忆规则）', '## Output（输出规则）', '记忆规则在输出规则之前')
 
-  // 文件次序（照 openclaw 的 CONTEXT_FILE_ORDER：soul 20 / identity 30 / user 40 / bootstrap 60 / memory 70）
+  // 文件次序（照 openclaw 的 CONTEXT_FILE_ORDER：soul 20 / identity 30 / user 40 / memory 70）
+  order('## AGENTS.md（这个窗口是干什么的）', '## SOUL.md（你是谁', 'AGENTS 在 SOUL 之前（先有目的，再有人格）')
   order('## SOUL.md（你是谁', '## IDENTITY.md', 'SOUL 在 IDENTITY 之前')
   order('## IDENTITY.md', '## USER.md（关于他）', 'IDENTITY 在 USER 之前')
-  order('## USER.md（关于他）', '## BOOTSTRAP.md（照上面那节走）', 'USER 在 BOOTSTRAP 之前')
-  order('## BOOTSTRAP.md（照上面那节走）', '## MEMORY.md（长期记忆）', 'BOOTSTRAP 在 MEMORY 之前')
+  order('## USER.md（关于他）', '## MEMORY.md（长期记忆）', 'USER 在 MEMORY 之前')
+
+  // 主程序里一个字都不许提仪式（D112 的硬分叉判据）
+  ok(!p.includes('## Bootstrap Pending'), '主程序提示词里没有 Bootstrap Pending（仪式是另一个程序）')
+  ok(!p.includes('## BOOTSTRAP.md（照上面那节走）'), '主程序也不注入 BOOTSTRAP.md 全文')
+
+  // 仪式那一份现在没有「段落顺序」这回事了（D115）：它是一份判定器，
+  // 只有这一格、已记下的、三种标记。可见的话全在 RITUAL_SLOTS 里。
+  const keys = life.RITUAL_SLOTS.map((s) => s.key).join('、')
+  ok(keys === '称呼、在做、红线', '固定三格，顺序就是优先级（称呼必须先问）', keys)
+  ok(rp.length < 1200, '判定器提示词很短 —— 仪式不再注入 BOOTSTRAP.md 全文', String(rp.length))
+  // 它就是「另一个人」：人格层一样都不带给它（他原话「另一个 agent」）
+  ok(!rp.includes('## Interaction Style'), '仪式程序没有人格层（Interaction Style）')
+  ok(!rp.includes('## SOUL.md（你是谁'), '仪式程序不注入 SOUL.md')
+  ok(!rp.includes('## Execution Bias'), '仪式程序没有行动偏向段')
+  ok(rp.includes('判定器'), '仪式程序第一句就说清自己只做判定')
+  ok(rp.includes('不会显示给人看'), '它知道自己的字不会出现在界面上 —— 这条不写，它会开始说话')
 
   // 搬过来的判据要在，不是只搬了标题
   ok(p.includes('温暖、合作、安静地支持他'), 'Interaction Style 搬了「安静地支持」')
@@ -2088,10 +2151,10 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   ok(p.includes('不念文件名，不提路径'), 'Care 搬了「别把内部结构暴露给他」')
 
   // 实测踩到的：模型回了「芜柒。记住了。」但 USER.md 一个字没加。
-  // 「嘴上说记住了」和「真的写进去」是两件事，两处都要写死。
-  ok(p.includes('「记住了」这句话不算记'), '仪式里说清：说记住了不算记，要真的有块')
-  ok(p.includes('<profile>\n- 称呼｜'), '仪式里给了 profile 块的完整示例（光说「用 <profile> 记」它不会写）')
-  ok(p.includes('说「记住了」不算记'), '记忆规则里也有同一条判据')
+  // D115 之后这件事不再靠模型自觉：它只输出 <slot>，写档案由代码调 ingestProfile 做 ——
+  // 「说记住了」和「真写进去」之间没有它插话的地方。
+  ok(p.includes('说「记住了」不算记'), '记忆规则里仍有这条判据（主程序说话时）')
+  ok(!rp.includes('<profile>'), '判定器不被要求写块（写档案是代码的事，少一个会错的环节）')
 
   // 截断必须说出来：不说的截断 = 模型以为自己看全了
   const memPath = path.join(life.lifeDir(), 'MEMORY.md')
@@ -2105,12 +2168,11 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   fs.unlinkSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'))
   fs.writeFileSync(path.join(life.lifeDir(), '.bootstrap'), 'skip 2026-11-05 测试', 'utf8')
   const after = life.buildSystemPrompt()
-  ok(!after.includes('## Bootstrap Pending'), '仪式走完 → 命令段消失')
-  ok(!after.includes('## BOOTSTRAP.md（照上面那节走）'), '仪式走完 → 文件也不再注入')
   ok(after.includes('## Interaction Style'), '仪式走完 → 语气层还在')
   ok(after.includes('## Execution Bias'), '仪式走完 → 行动偏向还在')
   ok(after.includes('## Care'), '仪式走完 → Care 还在')
-  ok(after.length < p.length, '去掉仪式后提示词确实变短了')
+  // 仪式那一份比主程序短得多：它没有人格层、没有行动偏向、没有承诺段、没有日记
+  ok(rp.length < after.length, '仪式程序比主程序短（它只管问和记）')
 
   process.env.HUNDUN_LIFE_DIR = prev
 }
@@ -2300,7 +2362,7 @@ console.log('\n[3q] AGENTS.md：这个窗口为什么存在，排在最前')
   /* ---- 常驻：仪式走完之后它必须在（D087 的教训） ---- */
 
   ok(life.bootstrapPending(), '这时候仪式还没走完')
-  ok(p0.includes('## Bootstrap Pending'), '仪式在提示词里')
+  ok(life.buildPrompt().includes('判定器'), '仪式期发出去的是判定器那一份')
 
   life.ingestProfile(['称呼｜叫他小周', '在做｜写代码', '喜欢｜骑车', '性子｜话少', '作息｜十一点后别找我'])
   // 收尾发生在 buildSystemPrompt 开头（retireBootstrapIfDone），所以要先跑一次再判
@@ -2475,9 +2537,12 @@ console.log('\n[3s] 初始化应用：删目录重种，回到出厂（D100 开�
   // 真机事故：他叫芜柒，示例占位是「叫他小周」——抽取模型照抄示例，同主题顶替
   // 让假名字成了 active。占位必须是「〈名字〉」这种一眼假的模板形式。
   const memgate = require(path.join(ROOT, 'src/main/memgate.js'))
-  const bs = life.TPL_BOOTSTRAP
   const mg = memgate.buildPrompt({ userText: 'x', assistantText: 'y' })[0].content
-  for (const [where, txt] of [['仪式模板', bs], ['抽取提示词', mg]]) {
+  // D115 之后仪式模板里**已经没有任何示例答案**了（问题全在 RITUAL_SLOTS 里现成给出），
+  // 所以这条现在只对抽取提示词生效。反向断言留着，防止有人把示例又写回模板。
+  ok(!life.TPL_BOOTSTRAP.includes('小周'), '仪式模板里不再出现示例真名「小周」')
+  ok(!life.TPL_BOOTSTRAP.includes('叫他'), '仪式模板里没有任何称呼示例 —— 没有可抄的答案就不会抄')
+  for (const [where, txt] of [['抽取提示词', mg]]) {
     ok(!txt.includes('小周'), where + '里不再出现示例真名「小周」')
     ok(txt.includes('〈名字〉'), where + '的称呼示例是尖括号占位形式')
     ok(txt.includes('照抄') || txt.includes('不要照抄') || txt.includes('别照抄') || txt.includes('照抄进档案'), where + '里明说不要照抄')
@@ -2562,6 +2627,182 @@ console.log('\n[3v] 长期记忆覆盖与溢出 / 检索门槛 / 召回不抖')
 
   process.env.HUNDUN_LIFE_DIR = prev
   life.ensureLife()
+}
+
+/* ---------------- 3w. 加一个模型（D110） ---------------- */
+
+console.log('\n[3w] 加一个模型：名字、同地址合并、排到最后')
+
+{
+  // 起点：一家供应商、一个模型，正是「简单模式」生成的那种形状
+  const start = {
+    provider: {
+      deepseek: {
+        name: 'DeepSeek',
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: 'https://api.deepseek.com/v1', apiKey: 'k1' },
+        models: { 'deepseek-chat': { name: 'DeepSeek Chat', limit: { context: 128000 } } }
+      }
+    },
+    model: 'deepseek/deepseek-chat',
+    'x-hundun': { simple: { preset: 'deepseek', baseUrl: '', apiKey: 'k1', model: 'deepseek-chat' } }
+  }
+
+  // ① 换一个地址（中转站）→ 必须新建一家，不能占掉原来那家
+  const r1 = mm.addEntry(start, {
+    presetId: 'deepseek',
+    presetName: 'DeepSeek',
+    baseUrl: 'https://relay.example/v1',
+    apiKey: 'k2',
+    modelId: 'deepseek-chat',
+    name: 'DeepSeek（中转站）',
+    context: 64000
+  })
+  ok(r1.ok, '能加进一个不同地址的模型', r1.error)
+  const n1 = mm.normalize(r1.config)
+  ok(n1.ok && n1.chain.length === 2, '链上变成两个', n1.errors.join('；'))
+  ok(n1.chain[1].modelName === 'DeepSeek（中转站）', '名字就是他要的那个（卡片标题）', n1.chain[1].modelName)
+  ok(n1.chain[1].providerId !== 'deepseek', '地址不同就另立一家，不覆盖原来那份', n1.chain[1].providerId)
+  ok(n1.chain[0].apiKey === 'k1' && n1.chain[1].apiKey === 'k2', '两家的 key 各归各的')
+  ok(n1.selected.modelId === 'deepseek-chat' && n1.selected.apiKey === 'k1', '首选没变（排在前面的一直是先用）')
+
+  // ② 同一个地址再加一个模型 → 并进同一家，key 只需要填一遍
+  const r2 = mm.addEntry(r1.config, {
+    presetId: 'deepseek',
+    presetName: 'DeepSeek',
+    baseUrl: 'https://relay.example/v1',
+    apiKey: '',
+    modelId: 'deepseek-reasoner',
+    name: 'DeepSeek 4.1',
+    context: 128000
+  })
+  ok(r2.ok, '同地址能再加一个', r2.error)
+  const n2 = mm.normalize(r2.config)
+  ok(new Set(n2.chain.map((m) => m.providerId)).size === 2, '同地址没有多出一家（还是一个 provider 两个模型）')
+  ok(n2.chain[2].apiKey === 'k2', '第二个模型沿用同一家的 key（不用再填一遍）')
+  ok(n2.chain[2].modelName === 'DeepSeek 4.1', '每张卡片各叫各的名字')
+  ok(n2.chain.length === 3, '新的排在最后（优先用前面的）', n2.chain.map((m) => m.modelName).join(','))
+
+  // ③ 同一个 provider+模型 再加一次 → 明说，而不是静默变成两条
+  const dup = mm.addEntry(r2.config, {
+    presetId: 'deepseek',
+    presetName: 'DeepSeek',
+    baseUrl: 'https://relay.example/v1',
+    modelId: 'deepseek-reasoner',
+    name: '重复的'
+  })
+  ok(!dup.ok && dup.error.includes('已经在清单里'), '重复加同一个模型会明说', dup.error)
+
+  // ④ 从一家一个模型变成多个之后，「简单配置」的标记必须去掉
+  ok(!r1.config['x-hundun'].simple, '加第二个之后不再自称「简单配置」（留着它下次读的人会以为只有一家一个模型）')
+  ok(
+    mm.addEntry({ provider: {}, model: '' }, { presetId: 'x', baseUrl: 'https://a.example/v1', modelId: 'm' }).ok,
+    '从一份空配置起也能加（新装第一次）'
+  )
+
+  // ⑤ 输入不合法就说清楚，不写半份进去
+  ok(!mm.addEntry(start, { baseUrl: 'https://a.example/v1', modelId: '' }).ok, '没填模型名 → 拒绝')
+  ok(!mm.addEntry(start, { baseUrl: 'ftp://a', modelId: 'm' }).ok, '地址不是 http(s) → 拒绝')
+  ok(!mm.addEntry(start, { baseUrl: 'https://a.example/v1', modelId: 'a/b' }).ok, '模型名带斜杠 → 拒绝（斜杠是分隔符）')
+
+  // ⑥ 没起名字的时候：沿用原来的显示名，不要把目录里的名字冲成 id
+  const keep = mm.addEntry(start, {
+    presetId: 'deepseek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    modelId: 'deepseek-chat',
+    name: ''
+  })
+  ok(!keep.ok, '同一家同一个模型重复加还是拒绝（这里只是确认不会悄悄改名）')
+
+  const noName = mm.addEntry({ provider: {}, model: '' }, {
+    presetId: 'zhipu',
+    presetName: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    apiKey: 'kz',
+    modelId: 'glm-4.6'
+  })
+  const nn = mm.normalize(noName.config)
+  ok(noName.ok && nn.chain[0].modelName === 'glm-4.6', '没起名字就用模型名当标题', nn.chain[0]?.modelName)
+  ok(nn.chain[0].providerName === '智谱 GLM', 'provider 的名字留在副标题里（认得出是哪一家）')
+}
+
+console.log('\n[3x] 仪式是一整个独立程序：安装程序 → 走完 → 换成馄饨（D112）')
+
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  const mk = (name) => {
+    const root = path.join(TMP, name)
+    process.env.HUNDUN_LIFE_DIR = root
+    fs.rmSync(root, { recursive: true, force: true })
+    life.ensureLife()
+    return root
+  }
+
+  /* ① 仪式期发出去的是「判定器」，不是给馄饨加一段说明 */
+  mk('ritual-a')
+  const rp = life.buildPrompt()
+  const mp = life.buildSystemPrompt()
+  ok(rp !== mp, '仪式期和主程序是两份不同的提示词（不是同一份加个段落）')
+  ok(rp.includes('判定器'), '仪式程序第一句就交代自己只做判定')
+  ok(!rp.includes('## Interaction Style'), '它没有人格层 —— 所以他说的「另一个 agent」是结构，不是比喻')
+  ok(!rp.includes('## Execution Bias'), '它没有行动偏向（不办别的事）')
+  ok(rp.includes('<slot>end</slot>'), '他说想被陪着时可以判 end —— 出口还在')
+  ok(life.ritualState().pending, 'ritualState 说仪式还在')
+
+  /* ② 话是现成的：每个字都来自代码，模型造句的自由被拿掉了（D115） */
+  const boot = life.ritualReply({ kind: 'boot', slot: life.RITUAL_SLOTS[0] })
+  ok(boot.includes('■'), '开场带装饰')
+  ok(boot.includes('怎么称呼你'), '问题本身是完整中文（不用先解码）')
+  ok(!boot.includes('我'), '没有人称自述 —— 「我这边还是空的」这类句子没有出处了')
+  const skipLine = life.ritualReply({ kind: 'skip', slot: life.RITUAL_SLOTS[0] })
+  ok(skipLine.includes('未接上') && !skipLine.includes('错误'), '他绕开时只说信号没接上，不判他错')
+  ok(life.ritualReply({ kind: 'fill', slot: null }).includes('完■成'), '走完那一轮有收尾那一句')
+
+  /* ②b 判定标记：解析不出来一律当 skip，绝不瞎填（这一条是整件事的安全阀） */
+  ok(life.parseVerdict('<slot>称呼|芜柒</slot>', '称呼').value === '芜柒', '正常标记能解析出内容')
+  ok(life.parseVerdict('好的，我记下了。', '称呼').kind === 'skip', '没有标记 → skip（不猜）')
+  ok(life.parseVerdict('<slot>skip</slot>', '称呼').kind === 'skip', 'skip 标记')
+  ok(life.parseVerdict('<slot>end</slot>', '称呼').kind === 'end', 'end 标记')
+  ok(life.parseVerdict('<slot>称呼|</slot>', '称呼').kind === 'skip', '空值当 skip，不写空条目')
+  ok(life.parseVerdict('<slot>在做|写代码</slot>', '称呼').key === '称呼', '主题用代码里那一格，不信模型写的')
+
+  /* ③ 名字：那一屏要说「你好，芜柒」，取不到就不硬编一个 */
+  mk('ritual-b')
+  const w0 = life.ritualState().welcome
+  ok(w0[0] === '你好', '还没有称呼时只说「你好」，不拿「朋友」替他填')
+  ok(w0[1] === '我是馄饨，幸会' && w0[2] === '希望这里，能短暂的温暖你', '三句话就是他要的那三句')
+  life.ingestProfile(['称呼｜叫他芜柒'])
+  const st1 = life.ritualState()
+  ok(st1.name === '芜柒', '从 USER.md 取出称呼（去掉「叫他」）', st1.name)
+  ok(st1.welcome[0] === '你好，芜柒', '那一屏带上名字')
+
+  /* ④ 门槛：三格、且必须有「称呼」 */
+  ok(!life.bootstrapDone(), '只有一格时不走完')
+  life.ingestProfile(['在做｜写代码'])
+  ok(!life.bootstrapDone(), '两格也不走完')
+  life.ingestProfile(['陪伴｜多陪陪他'])
+  ok(life.bootstrapDone(), '三格含「称呼」就走完')
+  life.buildPrompt() // 触发 retireBootstrapIfDone
+  ok(!life.bootstrapPending(), '走完那轮就把 BOOTSTRAP.md 删掉')
+  ok(!life.ritualState().pending, 'ritualState 跟着变成「走完了」')
+  ok(life.buildPrompt() === life.buildSystemPrompt(), '走完之后发出去的就是馄饨那一份')
+  ok(life.buildPrompt().includes('## Interaction Style'), '主程序的人格层回来了')
+
+  /* ⑤ 三格但没有称呼：还得问下去（称呼是开口要用的） */
+  mk('ritual-c')
+  life.ingestProfile(['在做｜写代码', '作息｜十一点后别找我', '性子｜话少'])
+  ok(!life.bootstrapDone(), '三个主题但没有「称呼」→ 不算走完')
+  ok(life.bootstrapPending(), '那就继续问')
+
+  /* ⑥ 界面接线：过场只能靠真机验，这里只证「线接上了」 */
+  const vue = fs.readFileSync(path.join(ROOT, 'src/renderer/src/App.vue'), 'utf8')
+  ok(vue.includes('ceremony'), '界面里有那一屏的元素')
+  ok(vue.includes('syncRitual'), '每轮结束后会比一次仪式状态')
+  ok(vue.includes('playCeremony'), '逐字打出来的函数在')
+  ok(vue.includes('endCeremony'), '点一下能跳过')
+  ok(!/messages\.value\s*=\s*\[\]/.test(vue.slice(vue.indexOf('function endCeremony'), vue.indexOf('function syncRitual'))), '过场不删消息（只是盖住）')
+
+  process.env.HUNDUN_LIFE_DIR = prev
 }
 
 /* ---------------- 汇总 ---------------- */
