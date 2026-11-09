@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import SettingsPage from './components/SettingsPage.vue'
 import { liveHtml } from './live.js'
+import { ceremonySteps } from './ceremony.js'
 
 // logo 的唯一源是 build/logo.svg，构建时原样拷到 out/renderer/。
 // 用 './logo.svg' 字面量会被 esbuild 当模块依赖去解析（找不到就报错），
@@ -106,6 +107,8 @@ async function send(text) {
     return
   }
   notice.value = ''
+  // 他说的这几句不再单独打 ritual 标记（D121）：走完那一刻是整屏清空，
+  // 已经不靠「哪一条带标记」来判了。少一个标记，就少一处会漏的地方。
   messages.value.push({ role: 'user', content: t })
   input.value = ''
   nextTick(resize)
@@ -318,18 +321,23 @@ async function opening() {
 
 let ceremonySeq = 0
 let ceremonyTimers = []
+/** 走完只让它开口一次（D120）：跳过、播完、再点一下，不该说三遍 */
+let greeted = false
 
 function sleep(ms) {
   return new Promise((r) => ceremonyTimers.push(setTimeout(r, ms)))
 }
 
 /**
- * 逐字打出来。节奏是刻意不均匀的：逗号后停一下，整行打完停更久。
- * 均匀的节奏像进度条，不均匀的才像有人在打字。
+ * 逐字打出来。节奏在 `ceremony.js` 里，这里只管照着走。
+ * 分开是因为「什么时候该停多久」是这一屏的全部内容，而 .vue 里的代码
+ * 在 Windows 上没有断言能守（SSR 那条跑不起来，`e:` 盘符）。
  */
 async function playCeremony(lines) {
   const text = Array.isArray(lines) ? lines.filter((l) => typeof l === 'string' && l) : []
-  if (!text.length) return
+  // 没有词就别把这一屏卡在空台上（D121）：清空之后要是过场也放不出来，
+  // 屏幕上就是一片空——而这时候他等的恰恰是第一句话。
+  if (!text.length) return firstWord()
   const my = ++ceremonySeq
   ceremony.value = { boot: true, lines: text, typed: text.map(() => ''), out: false }
 
@@ -338,17 +346,14 @@ async function playCeremony(lines) {
   ceremony.value.boot = false
   await sleep(320)
 
-  for (let i = 0; i < text.length; i++) {
-    const chars = Array.from(text[i])
-    for (let k = 0; k < chars.length; k++) {
-      if (my !== ceremonySeq) return
-      ceremony.value.typed[i] = chars.slice(0, k + 1).join('')
-      await sleep(chars[k] === '，' ? 190 : 86)
-    }
-    await sleep(420)
+  // 最后一步 text 为 null，那是收场前那 5 秒——它已经把「打完再等」算进 wait 里了，
+  // 所以这里不再另加一段 sleep，否则 5 秒会变成 5 秒 + 一个凭空的数
+  for (const step of ceremonySteps(text)) {
+    if (my !== ceremonySeq) return
+    if (step.text !== null) ceremony.value.typed[step.line] = step.text
+    await sleep(step.wait)
   }
 
-  await sleep(1900)
   if (my !== ceremonySeq) return
   endCeremony()
 }
@@ -363,8 +368,45 @@ function endCeremony() {
   ceremonyTimers.push(
     setTimeout(() => {
       ceremony.value = null
+      // 淡出完了才让它开口（D120）。放在淡出之前的话，第一句会在遮罩底下长出来，
+      // 等他看见时已经打了一半——比什么都不说更怪。
+      firstWord()
     }, 640)
   )
+}
+
+/**
+ * 仪式走完，馄饨先开口（D120）。
+ *
+ * 不复用 `send()`：那一套每一步都在处理「他说了一句话」——把他的发言推上去、
+ * 失败时把话还给他、并发时提示「等它说完」。这里没有他那句话。
+ */
+async function firstWord() {
+  if (greeted) return
+  greeted = true
+  // 没配好 key 就什么都不说：这一屏安静地留在那儿，比弹一句报错体面
+  if (!cfg.value?.hasApiKey || streaming.value) return
+  streaming.value = true
+  liveIdx.value = -1
+  startLive()
+  scrollBottom()
+  try {
+    const res = await window.hundun.chat.send('__hello__')
+    if (res && res.error) {
+      finalize('')
+      notice.value = res.error
+      noticeBad.value = true
+    } else {
+      finalize((res && res.text) || '')
+    }
+  } catch (e) {
+    finalize('')
+    notice.value = String(e.message || e)
+    noticeBad.value = true
+  } finally {
+    streaming.value = false
+    if (liveIdx.value >= 0) finalize('')
+  }
 }
 
 /** 主进程给的仪式状态，和上一轮比一次 */
@@ -372,7 +414,22 @@ function syncRitual(next) {
   if (!next || typeof next.pending !== 'boolean') return
   const was = ritualPending.value
   ritualPending.value = next.pending
-  if (was && !next.pending) playCeremony(next.welcome)
+  if (!was || next.pending) return
+
+  // 走完了：整屏清空，一条不留（D121）。
+  //
+  // D118 用的是「只滤带 ritual 标记的那几条」，理由是「万一中途有别的消息，
+  // 不该跟着一起没」。这个理由在真机上站不住：**标记漏一条，那条就永远留下**，
+  // 而且看不出来是哪一条漏了（14:20 那一屏就是——他自己的三句回答停在屏幕上）。
+  //
+  // 这里可以整屏清空，是因为仪式期这条会话里**不可能有别的东西**：
+  // BOOTSTRAP.md 还在的时候，每一次发送都走 ritualTurn，主进程也不会把这段写进 history
+  // （D115）。所以「清空」不是偷懒，是这一屏本来就只有安装程序的话。
+  // 判据从「哪几条带标记」换成「这一刻是不是仪式刚结束」——后者只有一个来源，不会漏。
+  messages.value = []
+  liveIdx.value = -1
+  greeted = false
+  playCeremony(next.welcome)
 }
 
 /* ---------- 事件 ---------- */
@@ -453,12 +510,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="shell">
-    <!-- 仪式走完那一屏（D112）。盖在整窗上面，**不删任何一条消息** ——
-         它只是盖住，放完自己淡出。点一下能跳过：他没耐心看完的话，这屏不该扣着他。 -->
+    <!-- 仪式走完那一屏（D112）。盖在整窗上面，放完自己淡出。点一下能跳过。 -->
     <div v-if="ceremony" class="ceremony" :class="{ out: ceremony.out }" @click="endCeremony">
       <div v-if="ceremony.boot" class="ceremony-boot">系统初始化成功<i>✓</i></div>
       <div v-else class="ceremony-lines">
-        <p v-for="(l, i) in ceremony.lines" :key="i">{{ ceremony.typed[i] }}</p>
+        <!-- ghost 是这一整行的透明副本，只负责把宽度撑住；真字在上面盖着打。
+             不这么写的话，居中会跟着逐字重排，26px 下整行左右抖 -->
+        <p v-for="(l, i) in ceremony.lines" :key="i">
+          <span class="ceremony-ghost">{{ l }}</span>
+          <span class="ceremony-ink">{{ ceremony.typed[i] }}</span>
+        </p>
       </div>
     </div>
 
@@ -573,7 +634,9 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-for="(m, i) in messages" :key="i">
-            <div class="msg" :class="{ me: m.role === 'user', sys: m.ritual }">
+            <!-- sys 只管「这不是馄饨在说话」的那一侧。他自己说的话即使也在仪式期
+                 （带 ritual 标记是为了走完时一起清掉，D120），仍然要靠右排 -->
+            <div class="msg" :class="{ me: m.role === 'user', sys: m.ritual && m.role !== 'user' }">
               <!-- 仪式期不戴馄饨的头像（D115）：那几轮是装程序在说话，
                    顶着馄饨的脸说「■■ 需要你回答 ■■」是把两个人当成一个人 -->
               <div v-if="m.role !== 'user' && !m.ritual" class="avatar">

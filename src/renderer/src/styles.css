@@ -1963,31 +1963,55 @@ textarea::placeholder {
   opacity: 0;
 }
 
+/* 开机自检那一行（D120）。
+   原来 13px / 0.2em / 闪两次共 1.8 秒，而这一行只挂 1.1 秒（`sleep(1100)` 后
+   `boot = false` 就把它摘掉了）—— 动画永远播不完整，切走那一刻停在半路。
+   现在 0.5s × 2 = 1.0s，留 100ms 余量，两次闪完还站得住。
+   字体保留等宽：这是全屏唯一一处「程序在说话」的证据，和下面那三句衬线是两个声音，
+   但字号和颜色要收在同一套里，不然像两个应用拼在一起。 */
 .ceremony-boot {
   font-family: ui-monospace, Menlo, Consolas, 'Courier New', monospace;
-  font-size: 13px;
-  letter-spacing: 0.2em;
-  color: var(--ink-2);
-  animation: ceremony-dim 0.9s steps(2, end) 2;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  animation: ceremony-dim 0.5s steps(2, end) 2;
 }
 
 .ceremony-boot i {
   font-style: normal;
   color: var(--accent);
-  margin-left: 0.45em;
+  margin-left: 0.6em;
+  font-size: 1.1em;
 }
 
 .ceremony-lines {
   text-align: center;
 }
 
+/* 26px / 行距 2.25（D117）。原来 20px / 2.1 —— 他说「过于小 也过于紧凑」。
+   这一屏一辈子只出现一次，字可以大得像印在纸上，不必挤成界面文案。 */
 .ceremony-lines p {
-  margin: 0;
-  min-height: 2.1em;
+  position: relative;
+  width: fit-content;
+  margin: 0 auto;
+  min-height: 2.25em;
   font-family: var(--serif);
-  font-size: 20px;
-  line-height: 2.1;
-  letter-spacing: 0.04em;
+  font-size: 26px;
+  line-height: 2.25;
+  letter-spacing: 0.08em;
+}
+
+/* 透明的一整行先把宽度撑住。没有它，每打一个字 `text-align: center` 就会把整行
+   左右挪半格；20px 时还看不出来，26px 时那一下比「小」和「挤」更扎眼。 */
+.ceremony-ghost {
+  visibility: hidden;
+}
+
+/* 真正长出来的字，压在那行透明副本上，从行首开始往右长 */
+.ceremony-ink {
+  position: absolute;
+  left: 0;
+  top: 0;
 }
 
 @keyframes ceremony-dim {

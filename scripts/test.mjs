@@ -330,7 +330,10 @@ ok(life.listCommitments().length === closedBefore + 1, '已结案后再提，是
 const sp = life.buildSystemPrompt({})
 ok(sp.includes('<commit>'), '提示词里给了 commit 的写法')
 ok(sp.includes('缺一个就'), '提示词里写死了「有日期且有具体事」的判据')
-ok(sp.includes('宁可漏'), '提示词里给了反向偏好：宁可漏，不要多记')
+// D123：反向偏好没删，但**范围收窄**了。原来那句「多数日子应该是零条」罩着全部五种块，
+// 连日记一起压死了（真机一天 95 字节）。现在只管那四种「会变成你去问他的话」的记忆。
+ok(sp.includes('日记写密，别的写稀'), '反向偏好还在，但收窄成「日记写密、别的写稀」（D123）')
+ok(sp.includes('其余四种多数日子是零条'), '四种稀缺记忆仍然写着「多数日子零条」')
 ok(sp.includes('别问「要不要记着」'), '提示词里封死了当场确认（D049）')
 
 process.env.HUNDUN_LIFE_DIR = TMP
@@ -456,6 +459,105 @@ searchMod.search = realSearch
 paths.setContext({ userId: 'local', agentId: 'hundun' })
 life.ensureLife()
 conversation.resetSession()
+
+/* ---------------- 3c2. D120：交接摘要 ---------------- */
+
+console.log('\n[3c2] D120：交接摘要 —— 仪式刚走完的那一轮，模型知道自己刚「不在场」时发生了什么')
+
+// life 层：renderHandoff
+ok(life.renderHandoff(null) === null && life.renderHandoff([]) === null, '没有答话就不渲染交接段')
+const hf = life.renderHandoff([
+  { key: '称呼', value: '芜柒' },
+  { key: '在做', value: '在摆烂' },
+  { key: '红线', value: '别提家里的事' }
+])
+ok(hf.includes('## 交接') && hf.includes('从这一句起，才是你和他'), '交接段有头有尾')
+ok(hf.includes('「芜柒」') && hf.includes('「在摆烂」') && hf.includes('「别提家里的事」'), '答话原文一字不差地进去')
+
+// take 语义：取走一次就没了，不会重复注入
+life.setRitualHandoff([{ key: '称呼', value: '老吴' }])
+const takenOnce = life.takeRitualHandoff()
+ok(Array.isArray(takenOnce) && takenOnce.length === 1 && life.takeRitualHandoff() === null, '交接摘要取走一次就消失')
+
+// buildSystemPrompt：handoff 只在被交给的那一轮存在（传原始数组，渲染在内部做）
+const HF_RAW = [
+  { key: '称呼', value: '芜柒' },
+  { key: '在做', value: '在摆烂' },
+  { key: '红线', value: '别提家里的事' }
+]
+const sysWithHf = life.buildSystemPrompt({ handoff: HF_RAW })
+const sysWithoutHf = life.buildSystemPrompt()
+ok(sysWithHf.includes('## 交接') && sysWithHf.includes('「芜柒」'), 'buildSystemPrompt 会把交接段注入')
+ok(!sysWithoutHf.includes('## 交接'), '不传就没有——不是常驻段落')
+
+// conversation 层：send 是唯一消费者。mock 掉模型，抓每一轮的 system prompt 来看。
+const realStreamC2 = llm.streamChat
+const realChatC2 = llm.chat
+const realSearchC2 = searchMod.search
+const seenSystem = []
+llm.streamChat = async (opts, onDelta) => {
+  seenSystem.push(opts.messages[0].content)
+  const text = '嗯。'
+  onDelta && onDelta(text)
+  return text
+}
+llm.chat = async () => ({ text: '<slot>skip</slot>' })
+searchMod.search = async () => []
+life.endRitual()
+conversation.resetSession()
+
+life.setRitualHandoff([{ key: '称呼', value: '芜柒' }, { key: '在做', value: '在摆烂' }])
+await conversation.send('你好呀')
+ok(seenSystem[0].includes('## 交接') && seenSystem[0].includes('在摆烂'), '仪式刚结束的第一轮：模型收到交接摘要')
+await conversation.send('接着聊')
+ok(!seenSystem[1].includes('## 交接'), '第二轮就没有了——交接只在交出去的那一轮存在')
+
+// 切身份丢掉没交出去的摘要：另一段人生不该继承这一段的「刚发生的事」
+life.setRitualHandoff([{ key: '称呼', value: '老吴' }])
+conversation.resetSession()
+await conversation.send('在吗')
+ok(!seenSystem[2].includes('## 交接'), 'resetSession 把没交出去的摘要也丢了')
+
+llm.streamChat = realStreamC2
+llm.chat = realChatC2
+searchMod.search = realSearchC2
+// 这一段为了抓 system prompt 真跑了三轮 send，会话文件里留了 6 条历史。
+// 3d 节的断言建立在「干净会话」上——reset 把磁盘那份也删掉，别让它们漏过去。
+conversation.reset()
+
+/* ---------------- 3c3. D123：日记改成每天都写 ---------------- */
+
+console.log('\n[3c3] D123：日记 —— 模型自己写看法，代码只兜底原话')
+
+const jSys = life.buildSystemPrompt()
+ok(jSys.includes('日记（<memory>）：每天都该有东西'), '日记被单独拎出来讲（不再混在「五种块挑一个」里）')
+ok(jSys.includes('待办：问一句那个客户结没结账'), '给了「待办」的示例句')
+ok(jSys.includes('原话不用你抄'), '写明原话由系统另存，模型写的是看法')
+ok(jSys.includes('只有 <memory> 例外'), '「多数日子零条」收窄到另外四种，没再压着日记')
+
+// 标题去重：一天写三次只能有一个「### 记录」
+const D123 = path.join(ROOT, '.dev/test-d123')
+fs.rmSync(D123, { recursive: true, force: true })
+const prevLifeDir = process.env.HUNDUN_LIFE_DIR || TMP
+process.env.HUNDUN_LIFE_DIR = D123
+life.ensureLife()
+const d123File = path.join(life.lifeDir(), 'memory', life.dateStr() + '.md')
+life.appendJournal(['他今天在赶外包'])
+life.appendJournal(['待办：问一句结账没有'])
+life.appendJournal(['他说在摆烂，但今天第三次主动提外包'])
+const jtxt = fs.readFileSync(d123File, 'utf8')
+ok((jtxt.match(/### 记录/g) || []).length === 1, '一天写三次只有一个「### 记录」', '实际 ' + (jtxt.match(/### 记录/g) || []).length)
+ok(jtxt.includes('待办：问一句结账没有'), '模型写的待办落盘了')
+
+life.appendDiary('今天不想说话')
+ok(/- \d{2}:\d{2} 他说：今天不想说话/.test(fs.readFileSync(d123File, 'utf8')), '代码兜底的原话带「他说：」前缀')
+life.appendDiary('今天不想说话')
+ok((fs.readFileSync(d123File, 'utf8').match(/今天不想说话/g) || []).length === 1, '加前缀之后去重仍然生效')
+
+ok(life.buildSystemPrompt().includes('待办：问一句结账没有'), '模型写的待办会进下一轮的提示词（它明天读得到）')
+
+process.env.HUNDUN_LIFE_DIR = prevLifeDir
+fs.rmSync(D123, { recursive: true, force: true })
 
 /* ---------------- 3d. 会话落盘（D074） ---------------- */
 
@@ -1249,7 +1351,7 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   const bsRitual = life.buildPrompt()
 
   const boot = life.ritualReply({ kind: 'boot', slot: life.RITUAL_SLOTS[0] })
-  ok(boot.includes('初■■始化'), '开场是现成的系统话术（不经模型造句）')
+  ok(boot.includes('[INPUT-REQ] 等待录入参数：称呼'), '开场是录入协议的第一条请求（不经模型造句，D122）')
   ok(boot.includes('怎么称呼你'), '开场直接问第一格，不寒暄')
   ok(!boot.includes('我'), '开场里没有「我」—— 装程序不自称（D115 要的人机感就靠这条）')
 
@@ -1371,17 +1473,78 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsFirst.includes('不把球推回去'), '「要我怎么配合直接说」被点名（把选择权还给他＝没在场）')
   ok(bsFirst.includes('不汇报你记了什么'), '「名字落我这儿了」被点名（记忆不是进度汇报）')
   ok(
-    life.SOUL_HISTORY.at(-1).includes('里面这层：理性'),
-    '历史表最后一格是 D108 之前那版（含理性层）——漏掉它，装那版的机器永远升不上来'
+    life.SOUL_HISTORY.at(-2).includes('里面这层：理性'),
+    '历史表倒数第二格是 D108 之前那版（含理性层）——漏掉它，装那版的机器永远升不上来'
+  )
+  // ---- D117：他没话说那一轮（2026-11-09）----
+  // 他连着两次说「还是比预期中要短」「也比预期中冷」。D111 已经证伪字数假设
+  // （放宽配额不变长、全删更短），所以这次一个字都没动长度，动的是**落点**：
+  // 旧版「这一轮先做哪件」五种情形全假设「他说了一件有事的话」，「好的」一条都不命中，
+  // 没命中就走默认 —— 默认是确认 + 结束。那两句的毛病不是短，是每句都在关掉这一轮。
+  ok(life.TPL_SOUL.includes('他没什么话说'), '空输入有落点了（「好的」不再一路滑到「去睡吧」）')
+  ok(life.TPL_SOUL.includes('这一轮你来起头'), '空输入这一轮由它起头，不是把门带上')
+  ok(life.TPL_SOUL.includes('把它关掉'), '点名「去睡吧」「不用回我」这类关门口的写法')
+  ok(life.TPL_SOUL.includes('安慰说的是他的状态，不是他的作息'), '安慰和管作息分开（「早点睡」是管他）')
+  ok(life.TPL_SOUL.includes('有话没说出来'), '旧的「绕着说」那条还在（新条是补位，不是替换）')
+  ok(life.SOUL_HISTORY.length === 7, '七版出厂 SOUL 都在表里（V7 = D108 版）')
+  ok(!life.SOUL_HISTORY.at(-1).includes('他没什么话说'), '历史表最后一格是**被换掉**那版，不是当前版')
+
+  // ---- D119：照 openclaw 的档案结构补两节（2026-11-09）----
+  // 他的原话：「你看 openclaw 多有人味 我建议完全模仿他 不要另起炉灶」。
+  // 翻他机器上真在跑的那份（~/.openclaw/ 与 workspace/）：SOUL.md 1888 字符里
+  // 中文只有 7 行、**没有一条语气规则**；人味来自 USER.md 最后那一类
+  // （珍视这段关系、怕被遗忘）和按天写得很细的日记。我们的 USER.md 只有
+  // 「关于他／要求」，情感那一层没有地方落。
+  ok(life.TPL_USER.includes('## 他在意什么'), 'USER.md 模板有了「他在意什么」一节')
+  ok(life.TPL_MEMORY.includes('## 我们之间'), 'MEMORY.md 模板有了「我们之间」一节')
+  ok(life.TPL_IDENTITY.includes('答名字，不答你能干什么'), 'IDENTITY 里写明「他问你是谁，答名字不答功能」')
+
+  // 只调 ensureProfileSections，不调 ensureLife —— ensureLife 会种仪式文件，
+  // 把主测试线（TMP）里 BOOTSTRAP.md 的演进状态搅乱。这里要验的只是补节本身。
+  const LEGACY = path.join(ROOT, '.dev/test-legacy-sec')
+  const ldir = path.join(LEGACY, 'users', 'local', 'agents', 'hundun')
+  fs.rmSync(LEGACY, { recursive: true, force: true })
+  fs.mkdirSync(ldir, { recursive: true })
+  fs.writeFileSync(path.join(ldir, 'USER.md'), '# USER.md — 关于你\n\n## 关于他\n\n- [称呼] 芜柒\n\n## 要求\n\n## 访谈实录\n', 'utf8')
+  fs.writeFileSync(path.join(ldir, 'MEMORY.md'), '# MEMORY.md\n\n## 关于你（事实）\n\n## 按天的记录\n\n', 'utf8')
+  process.env.HUNDUN_LIFE_DIR = LEGACY
+  const filled = life.ensureProfileSections()
+  const patched = fs.readFileSync(path.join(ldir, 'USER.md'), 'utf8')
+  const patchedMem = fs.readFileSync(path.join(ldir, 'MEMORY.md'), 'utf8')
+  ok(filled.length === 2, '两个老档案都补了节', JSON.stringify(filled))
+  ok(patched.includes('## 他在意什么'), '存量档案补上「他在意什么」')
+  ok(patched.indexOf('## 他在意什么') < patched.indexOf('## 要求'), '补在「要求」前面，不是追加到末尾')
+  ok(patched.includes('- [称呼] 芜柒'), '补节没动他写过的那行')
+  ok(patchedMem.includes('## 我们之间'), '老 MEMORY.md 补上「我们之间」')
+  ok(life.ensureProfileSections().length === 0, '补节是幂等的（跑第二遍无事可做）')
+  fs.rmSync(LEGACY, { recursive: true, force: true })
+  process.env.HUNDUN_LIFE_DIR = TMP
+  ok(
+    life.ritualReply({ kind: 'missing', slot: life.RITUAL_SLOTS[1] }).includes('未检测到有效输入'),
+    '他绕开时按「未检测到有效输入」打回，不判他错（D122 的协议话术）'
   )
   ok(
-    life.ritualReply({ kind: 'skip', slot: life.RITUAL_SLOTS[0] }).includes('未接上'),
-    '他绕开时只说信号没接上，不判他错（也不说「回答无效」）'
+    life.ritualReply({ kind: 'missing', slot: life.RITUAL_SLOTS[1] }).includes('“跳过”'),
+    '打回那行告诉他可以输入跳过——跳过是他手里的选项，不是我们替他决定'
+  )
+  ok(
+    !life.ritualReply({ kind: 'missing', slot: life.RITUAL_SLOTS[0] }).includes('可输入'),
+    '称呼那格打回时不给跳过选项——没有称呼，开口那一句接不住'
   )
   ok(!life.bootstrapDone(), '一条都没记时不算走完')
 
+  // [2]/[3] 段的会话测试用 endRitual() 模拟过「他不想答了」，把 BOOTSTRAP.md 删掉了。
+  // 这一段验的是仪式判定本身，不能建立在上一段的副作用上 —— 显式放回去。
+  // （`seedBootstrapOnce` 不会帮我们种：`.bootstrap` 一次性标记早就写下了。）
+  if (!life.bootstrapPending()) {
+    fs.writeFileSync(path.join(life.lifeDir(), 'BOOTSTRAP.md'), life.TPL_BOOTSTRAP, 'utf8')
+  }
+  // 档案也重置回空白：前面验落盘时写过一条「职业」，留着它，数主题时会平白多占一格
+  // （2 格 + 职业 = 3 格，判据直接过）。这一段要从「一条都没有」开始验。
+  fs.writeFileSync(path.join(life.lifeDir(), 'USER.md'), life.TPL_USER, 'utf8')
+
   life.ingestProfile(['称呼｜叫他老吴'])
-  ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束')
+  ok(life.bootstrapPending() && !life.bootstrapDone(), '只问了一件：文件还在，仪式没结束', 'pending=' + life.bootstrapPending() + ' done=' + life.bootstrapDone() + ' keys=' + life.aboutKeys().join(','))
 
   // 实测踩到的：档案一记上「称呼」就不再是空的，如果注入判据写成
   // `isProfileEmpty()`，第一条答完仪式就整个消失，剩下几格永远不问。
@@ -1890,6 +2053,55 @@ console.log('\n[4a] 等待态：它还没开口的时候不是一片空白')
   )
 }
 
+/* ---------------- 4b. 仪式过场的节奏 ---------------- */
+
+console.log('\n[4b] 仪式过场：他要的那几个停顿')
+
+{
+  // 同样抽成纯函数再测：时序写在 .vue 里就没有断言守得住。
+  const ce = await import(pathToFileURL(path.join(ROOT, 'src/renderer/src/ceremony.js')).href)
+
+  const LINES = ['你好 芜柒', '我是馄饨 幸会', '希望这里 能短暂的温暖你']
+  const steps = ce.ceremonySteps(LINES)
+  const waitAt = (line, text) => {
+    const s = steps.find((x) => x.line === line && x.text === text)
+    return s ? s.wait : -1
+  }
+
+  ok(waitAt(0, '你好 ') === 700, '「你好」之后那个空格停 0.7 秒')
+  ok(waitAt(0, '你好 芜柒') === 1000, '第一行整行打完停 1 秒')
+  ok(waitAt(1, '我是馄饨 ') === 700, '「我是馄饨」之后那个空格停 0.7 秒')
+  ok(waitAt(1, '我是馄饨 幸会') === 1000, '第二行整行打完停 1 秒')
+  ok(waitAt(2, '希望这里 ') === 500, '「希望这里」之后那个空格停 0.5 秒')
+
+  const tail = steps[steps.length - 1]
+  ok(tail.text === null && tail.wait === 5000, '最后那句打完之后停 5 秒才收场')
+  ok(waitAt(2, '希望这里 能短暂的温暖你') === 0, '最后一行不另加行停顿——它接的就是那 5 秒')
+
+  ok(
+    ce.CHAR_MS === 130 && ce.ceremonySteps(['你好'])[0].wait === 130,
+    '字与字之间 130ms（原来 86，他说慢一点）'
+  )
+
+  const total = steps.reduce((n, s) => n + s.wait, 0)
+  ok(total > 10000, '整段铺到十秒以上，不是一眨眼', total + 'ms')
+
+  // 没有称呼时第一行短了两个字，后面的停顿不能跟着错位
+  const noName = ce.ceremonySteps(['你好', '我是馄饨 幸会', '希望这里 能短暂的温暖你'])
+  ok(
+    noName.find((x) => x.text === '我是馄饨 ')?.wait === 700,
+    '第一行短了，第二行的停顿不往前移'
+  )
+
+  // D117：断句靠空格，不靠标点。整段输出里不该出现任何标点字符
+  const allTyped = steps.filter((s) => s.text !== null).map((s) => s.text.slice(-1))
+  ok(!allTyped.some((ch) => '，。、,.'.includes(ch)), '打出来的字里一个标点都没有')
+  ok(ce.ceremonySteps(['我们是朋友']).length === 6, '没有空格的一行就只是五个字 + 收场那一步')
+
+  ok(ce.ceremonySteps([]).length === 0, '没有文案就一步都不走')
+  ok(ce.ceremonySteps([null, '', '在']).length === 2, '空行不计入（一个字 + 收场那一步）')
+}
+
 /* ---------------- 5. 产物完整性 ---------------- */
 
 console.log('\n[5] 构建产物')
@@ -2132,7 +2344,15 @@ console.log('\n[3n] 提示词骨架照 openclaw：段落顺序与文件次序')
   // 仪式那一份现在没有「段落顺序」这回事了（D115）：它是一份判定器，
   // 只有这一格、已记下的、三种标记。可见的话全在 RITUAL_SLOTS 里。
   const keys = life.RITUAL_SLOTS.map((s) => s.key).join('、')
-  ok(keys === '称呼、在做、红线', '固定三格，顺序就是优先级（称呼必须先问）', keys)
+  ok(keys === '称呼、在做、愿望、红线', '固定四格，顺序就是优先级（称呼必须先问，D122 加了愿望）', keys)
+  ok(
+    life.RITUAL_SLOTS[0].skippable === false && life.RITUAL_SLOTS.slice(1).every((s) => s.skippable),
+    '只有称呼不能跳——其余三格他都有说「跳过」的权利'
+  )
+  ok(
+    life.RITUAL_SLOTS.every((s) => s.ask && s.recorded && s.label && s.hint && s.req),
+    '每一格的问话、回执、标签、判据都齐——缺一样，那一轮就会说到一半没词'
+  )
   ok(rp.length < 1200, '判定器提示词很短 —— 仪式不再注入 BOOTSTRAP.md 全文', String(rp.length))
   // 它就是「另一个人」：人格层一样都不带给它（他原话「另一个 agent」）
   ok(!rp.includes('## Interaction Style'), '仪式程序没有人格层（Interaction Style）')
@@ -2225,6 +2445,40 @@ console.log('\n[3p] 写入回执：说「记住了」不算，块落到盘上才
     const mg = memgate.buildPrompt({ userText: 'x', assistantText: 'y' })[0].content
     ok(mg.includes('不许把内容硬套进示例里的主题'), '抽取规矩：主题按内容起，不硬套')
     ok(mg.includes('别硬进 <profile>'), '抽取规矩：情绪话不进 profile')
+  }
+
+  /* ---- D123：日记补写（daily-unwritten）---- */
+
+  // 探针事实：模型会写日记，但只在对话收尾那轮写。前面几轮一个字不写，
+  // 一天聊十轮、他说了十件事，日记里只有收尾那两条 —— 密度起不来。
+  const daily = { userText: '今天接了个外包，客户又改需求，烦死了', assistantText: '需求改来改去最烦。改的是哪块？', notes: [] }
+  ok(
+    nr({ ...daily, dailyDue: true }).reason === 'daily-unwritten',
+    '说了件事、零块、到点了 → 补一趟日记'
+  )
+  ok(nr({ ...daily }) === null, '没到点（dailyDue 没给）→ 不补，节流归调用方管')
+  ok(
+    nr({ ...daily, dailyDue: true, notes: [{ target: 'memory', lines: ['他在赶外包'] }] }) === null,
+    '模型自己写了块 → 不重复补'
+  )
+  ok(nr({ ...daily, dailyDue: true, userText: '嗯' }) === null, '纯应答不点补写的火')
+  ok(nr({ ...daily, dailyDue: true, userText: '好的我知道了谢谢你啊' }) === null, '长一点的应答也不点（ACK 正则）')
+  ok(
+    nr({ ...daily, dailyDue: true, bootstrapPending: true }).reason === 'ritual-unrecorded',
+    '仪式期走 ritual 那条，不叠成 daily（同一个理由不做两趟）'
+  )
+
+  {
+    const dg = memgate.buildPrompt({ userText: 'x', assistantText: 'y', daily: true })[0].content
+    ok(dg.includes('补几条日记'), '补日记那趟的语气换成了「补日记」')
+    ok(dg.includes('日记可以写你的判断'), '日记允许写判断（挂在他说的话上）')
+    ok(dg.includes('不许写性格定性'), '判断不许写成性格定性')
+    ok(dg.includes('待办：'), '给了待办的写法')
+    ok(!dg.includes('不写你的感受'), '抽事实那句「不写你的感受」不能出现在日记分支里——它会把判断一起掐死')
+    ok(dg.includes('待办：'), '待办是给明天的自己留的')
+
+    const og = memgate.buildPrompt({ userText: 'x', assistantText: 'y' })[0].content
+    ok(og.includes('不写你的感受'), '不补日记时，抽事实那句原样还在')
   }
 
   /* ---- 结构校验：不过就整批不要 ---- */
@@ -2749,14 +3003,28 @@ console.log('\n[3x] 仪式是一整个独立程序：安装程序 → 走完 →
   ok(rp.includes('<slot>end</slot>'), '他说想被陪着时可以判 end —— 出口还在')
   ok(life.ritualState().pending, 'ritualState 说仪式还在')
 
-  /* ② 话是现成的：每个字都来自代码，模型造句的自由被拿掉了（D115） */
+  /* ② 话是现成的：每个字都来自代码，模型造句的自由被拿掉了（D115／D122） */
   const boot = life.ritualReply({ kind: 'boot', slot: life.RITUAL_SLOTS[0] })
-  ok(boot.includes('■'), '开场带装饰')
+  ok(boot.includes('[INPUT-REQ]'), '开场就是第一条录入请求——终端协议，不是寒暄')
   ok(boot.includes('怎么称呼你'), '问题本身是完整中文（不用先解码）')
   ok(!boot.includes('我'), '没有人称自述 —— 「我这边还是空的」这类句子没有出处了')
-  const skipLine = life.ritualReply({ kind: 'skip', slot: life.RITUAL_SLOTS[0] })
-  ok(skipLine.includes('未接上') && !skipLine.includes('错误'), '他绕开时只说信号没接上，不判他错')
-  ok(life.ritualReply({ kind: 'fill', slot: null }).includes('完■成'), '走完那一轮有收尾那一句')
+  const skipLine = life.ritualReply({ kind: 'missing', slot: life.RITUAL_SLOTS[2] })
+  ok(skipLine.includes('未检测到有效输入') && !skipLine.includes('错误'), '他绕开时按协议打回，不判他错')
+  ok(
+    life.ritualReply({ kind: 'skipped', prev: life.RITUAL_SLOTS[2], slot: null }).includes('[STATUS: SKIPPED]') &&
+      life.ritualReply({ kind: 'skipped', prev: life.RITUAL_SLOTS[2], slot: null }).includes('[STATUS: INIT-DONE]'),
+    '跳过那格有回执，最后一格跳过时也照样收尾'
+  )
+  ok(
+    life.ritualReply({ kind: 'fill', prev: life.RITUAL_SLOTS[0], slot: null }).includes('INIT-DONE'),
+    '走完那一轮有收尾那一条'
+  )
+  ok(
+    life.ritualReply({ kind: 'fill', prev: life.RITUAL_SLOTS[0], slot: life.RITUAL_SLOTS[1] }).includes(
+      '正在构建用户画像'
+    ),
+    '第一格录完带一句画像构建——只有这一处，后面不再重复'
+  )
 
   /* ②b 判定标记：解析不出来一律当 skip，绝不瞎填（这一条是整件事的安全阀） */
   ok(life.parseVerdict('<slot>称呼|芜柒</slot>', '称呼').value === '芜柒', '正常标记能解析出内容')
@@ -2766,15 +3034,19 @@ console.log('\n[3x] 仪式是一整个独立程序：安装程序 → 走完 →
   ok(life.parseVerdict('<slot>称呼|</slot>', '称呼').kind === 'skip', '空值当 skip，不写空条目')
   ok(life.parseVerdict('<slot>在做|写代码</slot>', '称呼').key === '称呼', '主题用代码里那一格，不信模型写的')
 
-  /* ③ 名字：那一屏要说「你好，芜柒」，取不到就不硬编一个 */
+  /* ③ 名字：那一屏要说「你好 芜柒」，取不到就不硬编一个 */
   mk('ritual-b')
   const w0 = life.ritualState().welcome
   ok(w0[0] === '你好', '还没有称呼时只说「你好」，不拿「朋友」替他填')
-  ok(w0[1] === '我是馄饨，幸会' && w0[2] === '希望这里，能短暂的温暖你', '三句话就是他要的那三句')
+  ok(w0[1] === '我是馄饨 幸会' && w0[2] === '希望这里 能短暂的温暖你', '三句话就是他要的那三句')
+  ok(
+    w0.every((l) => !/[，。、,.]/.test(l)),
+    '三句里一个标点都没有——断句交给空格和停顿（D117）'
+  )
   life.ingestProfile(['称呼｜叫他芜柒'])
   const st1 = life.ritualState()
   ok(st1.name === '芜柒', '从 USER.md 取出称呼（去掉「叫他」）', st1.name)
-  ok(st1.welcome[0] === '你好，芜柒', '那一屏带上名字')
+  ok(st1.welcome[0] === '你好 芜柒', '那一屏带上名字，中间是一个空格而不是逗号')
 
   /* ④ 门槛：三格、且必须有「称呼」 */
   ok(!life.bootstrapDone(), '只有一格时不走完')
@@ -2800,7 +3072,83 @@ console.log('\n[3x] 仪式是一整个独立程序：安装程序 → 走完 →
   ok(vue.includes('syncRitual'), '每轮结束后会比一次仪式状态')
   ok(vue.includes('playCeremony'), '逐字打出来的函数在')
   ok(vue.includes('endCeremony'), '点一下能跳过')
-  ok(!/messages\.value\s*=\s*\[\]/.test(vue.slice(vue.indexOf('function endCeremony'), vue.indexOf('function syncRitual'))), '过场不删消息（只是盖住）')
+  ok(
+    !/messages\.value\s*=\s*\[\]/.test(
+      vue.slice(vue.indexOf('function endCeremony'), vue.indexOf('function syncRitual'))
+    ),
+    '点跳过只是提前淡出，不动消息'
+  )
+  // ---- 走完那一刻：整屏清空（D121）----
+  // 判据换成「仪式刚结束」这一个事实，不再逐条看标记：标记漏一条，那条就永远留在屏幕上，
+  // 而且看不出来是哪一条漏的（14:20 真机上他自己的三句回答就停在屏幕中间）。
+  const syncBody = vue.slice(
+    vue.indexOf('function syncRitual'),
+    vue.indexOf('/* ---------- 事件 ----------')
+  )
+  ok(/messages\.value\s*=\s*\[\]/.test(syncBody), '仪式走完那一刻整屏清空，一条不留（D121）')
+  ok(
+    !/filter\(\(m\)\s*=>\s*!m\.ritual\)/.test(vue),
+    '不再靠逐条标记去滤——那种写法漏一条，它就永远留着'
+  )
+  const clearAt = syncBody.indexOf('messages.value = []')
+  const guardAt = syncBody.indexOf('if (!was || next.pending) return')
+  ok(guardAt >= 0 && clearAt > guardAt, '清空在「真的刚走完」那个早退之后，不是每轮都清')
+  ok(
+    vue.includes('ceremony-ghost') && vue.includes('ceremony-ink'),
+    '每行有一份透明副本撑住宽度，打字时整行不会左右抖'
+  )
+  ok(
+    !/content: t, ritual/.test(vue),
+    '他说的那几句不打标记了——清空不看标记，多一个标记就是多一处会漏的地方（D121）'
+  )
+  ok(
+    /sys: m\.ritual && m\.role !== 'user'/.test(vue),
+    '标记归标记，他自己说的话仍然靠右排，不套「非馄饨」那套缩进'
+  )
+  ok(vue.includes('__hello__'), '走完那一屏收起来之后让它先开口')
+  ok(
+    /if \(!text\.length\) return firstWord\(\)/.test(vue),
+    '过场没词可放时直接让它开口——清空之后要是也没声音，屏幕上就真的一片空'
+  )
+  ok(
+    /greeted\s*=\s*false[\s\S]{0,200}playCeremony/.test(vue) &&
+      /if \(greeted\) return/.test(vue),
+    '只开口一次：跳过、播完、再点一下，不该说三遍'
+  )
+
+  // 跨文件：界面靠「这一轮带回来的 ritual」才知道仪式走完了。
+  // 作废的那一轮要是不带，界面就没理由清屏——14:20 那一屏正是这么留下来的。
+  const conv = fs.readFileSync(path.join(ROOT, 'src/main/conversation.js'), 'utf8')
+  ok(
+    /dropped: true, text: '', ritual: life\.ritualState\(\)/.test(conv),
+    '作废的那一轮也把仪式状态带回来，否则界面不知道已经走完'
+  )
+  ok(
+    /跳过\|skip/.test(conv) && /life\.skipSlot\(slot\.key\)/.test(conv),
+    '「跳过」由主进程字面认，不经过判定模型——认命令词是程序的事，不是模型的事（D122）'
+  )
+  ok(
+    /if \(!next\) \{\s*life\.endRitual\(\)/.test(conv),
+    '最后一格走完（填完或跳完）也要删 BOOTSTRAP.md——只靠主题数判，「称呼填了其余全跳」那条路会永远收不了尾'
+  )
+
+  const mainJs = fs.readFileSync(path.join(ROOT, 'src/main/index.js'), 'utf8')
+  ok(
+    mainJs.includes('__hello__') && mainJs.includes('第一次见他'),
+    '那条开场指令在主进程里，且说清了是「第一次见」——不然它会照着久别回来的口气开口'
+  )
+
+  const css = fs.readFileSync(path.join(ROOT, 'src/renderer/src/styles.css'), 'utf8')
+  // 自检那行的停留时长来自 App.vue 的 sleep(1100)，动画时长来自 styles.css。
+  // 两个数分在两个文件里，对不上不会报错——只是那行字永远闪不完就被摘掉。
+  // 所以这里不硬编码秒数，直接拿两边算。
+  const bootHold = (vue.match(/await sleep\((\d+)\)\s*\n\s*if \(my !== ceremonySeq\) return\s*\n\s*ceremony\.value\.boot = false/) || [])[1]
+  const bootAnim = css.match(/\.ceremony-boot\s*\{[^}]*animation:\s*ceremony-dim ([\d.]+)s[^;]*\s(\d+);/)
+  ok(
+    bootHold && bootAnim && Number(bootAnim[1]) * 1000 * Number(bootAnim[2]) <= Number(bootHold),
+    `自检那行闪两下 ${bootAnim ? `${Number(bootAnim[1]) * 1000 * Number(bootAnim[2])}ms` : '?'}` +
+      ` 要在它存在的 ${bootHold || '?'}ms 里播得完（原来是 1.8s 硬塞进 1.1s，永远被打断）`
+  )
 
   process.env.HUNDUN_LIFE_DIR = prev
 }

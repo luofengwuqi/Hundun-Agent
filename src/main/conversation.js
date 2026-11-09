@@ -47,6 +47,13 @@ let memoryQuilt = null
  */
 let ritualHistory = []
 
+/**
+ * D120：仪式期间他答了什么（key+原话），fill 时攒着，走完那一刻打包成交接摘要。
+ * 和 ritualHistory 一样不落盘——答过的东西在 USER.md 里，这里只是「刚发生的事」
+ * 的原件，给模型当轮上下文用一次就扔。setRitualHandoff 之后由 life 持有。
+ */
+const ritualFilled = []
+
 function sessionFile() {
   return path.join(life.lifeDir(), SESSION_FILE)
 }
@@ -134,6 +141,8 @@ function resetSession() {
   summary = ''
   busy = false
   memoryQuilt = null
+  // 交接摘要跟着会话走：切身份就是另一段人生，旧的摘要必须扔（D120）。
+  life.takeRitualHandoff()
   session.bump()
   return loadSession()
 }
@@ -252,12 +261,22 @@ const gate = memgate.create({
   log: (msg) => console.log('[memgate] ' + msg)
 })
 
+// D123：日记补写的节流窗口。见 repairIfNeeded 里的说明。
+const DAILY_REPAIR_GAP_MS = 30 * 60 * 1000
+let lastDailyRepairAt = 0
+
 /**
  * 判据命中就补写。**不 await**：这一轮的话已经说出口了，
  * 补写失败不该让他多等，也不该把已经正常的那轮变成报错。
  * 代次在这里守一道 —— 补写期间换了身份，这批记忆属于上一个人。
  */
 function repairIfNeeded({ userText, assistantText, notes, provenance, myEpoch }) {
+  // D123：日记补写的节流。真机探针（3 轮）显示模型只在**对话收尾**那轮写日记，
+  // 一天聊十轮、他说了十件事，日记里只有最后两条。这条兜底半小时最多跑一次，
+  // 能把当天补到十来条，又不至于每轮都多花一次模型调用。
+  // 进程重启归零：重启后第一次会补一次，正好。
+  const now = Date.now()
+  const dailyDue = now - lastDailyRepairAt >= DAILY_REPAIR_GAP_MS
   let verdict = null
   try {
     verdict = memgate.needsRepair({
@@ -265,13 +284,15 @@ function repairIfNeeded({ userText, assistantText, notes, provenance, myEpoch })
       assistantText,
       notes,
       bootstrapPending: life.bootstrapPending(),
-      provenance
+      provenance,
+      dailyDue
     })
   } catch {
     return
   }
   if (!verdict) return
   if (session.isStale(myEpoch)) return
+  if (verdict.reason === 'daily-unwritten') lastDailyRepairAt = now
 
   gate
     .repair({
@@ -382,6 +403,16 @@ async function ritualTurn({ text, internal, myEpoch }) {
   const cfg = store.read()
   const slot = life.ritualSlot()
 
+  // 理论上到不了这里：所有格都有了或都跳过了，BOOTSTRAP.md 还没删——
+  // 直接收尾，别把人卡在一个没有下一格的协议里。
+  if (!slot && life.bootstrapPending()) {
+    life.endRitual()
+    life.setRitualHandoff(ritualFilled.splice(0))
+    const reply = life.ritualReply({ kind: 'fill', prev: null, slot: null })
+    ritualHistory.push({ role: 'assistant', content: reply })
+    return { text: reply, raw: reply, notes: 0, written: [], ritual: life.ritualState() }
+  }
+
   if (!internal) {
     // 原话照旧落盘（P-07／D028）——「他到底说过什么」不能因为这是仪式就少一份。
     life.appendChat('user', text)
@@ -394,6 +425,21 @@ async function ritualTurn({ text, internal, myEpoch }) {
   // 它自己开口那一轮：没有可判定的内容，直接给第一格。
   if (internal) {
     const reply = life.ritualReply({ kind: 'boot', slot })
+    ritualHistory.push({ role: 'assistant', content: reply })
+    return { text: reply, raw: reply, notes: 0, written: [], ritual: life.ritualState() }
+  }
+
+  // 「跳过」是协议词，主进程字面认，不走判定模型（D122）。
+  // 理由同 D115 的分工：可见的每个字都来自表，那么**判定哪些词是命令**也该在代码里——
+  // 让模型去认「跳过」，它就可能把「我想跳过这首歌」也当成跳格。
+  if (slot && /^\s*(跳过|skip)\s*$/i.test(text)) {
+    const next = life.skipSlot(slot.key)
+    const done = !next
+    if (done) {
+      life.endRitual()
+      life.setRitualHandoff(ritualFilled.splice(0))
+    }
+    const reply = life.ritualReply({ kind: 'skipped', prev: slot, slot: next })
     ritualHistory.push({ role: 'assistant', content: reply })
     return { text: reply, raw: reply, notes: 0, written: [], ritual: life.ritualState() }
   }
@@ -423,29 +469,64 @@ async function ritualTurn({ text, internal, myEpoch }) {
     }
   }
 
-  if (session.isStale(myEpoch)) return { dropped: true, text: '' }
+  // 这一轮作废了，但仪式状态还是要带回去（D121）。
+  // 原来这里只回 `{ dropped, text }`，界面拿不到 ritual 就不知道仪式已经走完——
+  // 于是屏幕上那些安装程序的话只能一直留着，界面也没有理由把它清掉。
+  if (session.isStale(myEpoch)) return { dropped: true, text: '', ritual: life.ritualState() }
 
   if (verdict.kind === 'fill') {
+    ritualFilled.push({ key: verdict.key, value: verdict.value })
     try {
       life.ingestProfile([verdict.key + '｜' + verdict.value])
     } catch {}
   }
 
   let done = false
+  let kind = 'fill'
+  let prev = slot
+  let next = null
   if (verdict.kind === 'end') {
     life.endRitual()
     done = true
+    kind = 'end'
   } else if (life.retireBootstrapIfDone()) {
     // 够格了（三个主题、且必须有「称呼」）—— 软件自己收尾，不问他。
+    // prev 置空：这一轮可能什么都没录进来（档案早就够了），不报 RECORDED，直接给收尾块。
     done = true
-  } else if (verdict.kind === 'skip' && slot) {
-    // 同一句话问三遍还问不出来，换下一格。仪式是给他用的，不是考他。
-    if (life.noteSkip(slot.key) >= 3) life.skipSlot(slot.key)
+    prev = null
+  } else if (verdict.kind === 'skip') {
+    // 他没答上：按「未检测到有效输入」打回重试。同一格三遍都空，才按跳过走——
+    // 跳过是**他说的**「跳过」，不是我们替他决定的。
+    if (slot && life.noteSkip(slot.key) >= 3) {
+      life.skipSlot(slot.key)
+      kind = 'skipped'
+      next = life.ritualSlot()
+      if (!next) {
+        life.endRitual()
+        done = true
+      }
+    } else {
+      kind = 'missing'
+      next = slot
+      prev = null
+    }
+  } else if (verdict.kind === 'fill') {
+    // 最后一格填完、后面的格都被跳过时，ritualSlot() 会返回 null——
+    // 这时也得收尾。原来只靠 retireBootstrapIfDone 的主题数判，
+    // 「称呼已填、其余全跳过」那条路走不到它，BOOTSTRAP.md 会永远留着。
+    next = life.ritualSlot()
+    if (!next) {
+      life.endRitual()
+      done = true
+    }
   }
 
-  const next = done ? null : life.ritualSlot()
-  const kind = done ? (verdict.kind === 'end' ? 'end' : 'fill') : verdict.kind
-  const reply = life.ritualReply({ kind, slot: next })
+  // 仪式走完的那一刻，把攒下的答话打包成交接摘要交给 life（D120）。
+  // splice 是取走：之后 ritualFilled 清空，就算 reset 也拿不到第二次。
+  // 没走完就不动它——下一格接着攒。
+  if (done) life.setRitualHandoff(ritualFilled.splice(0))
+
+  const reply = life.ritualReply({ kind, prev, slot: next })
   ritualHistory.push({ role: 'assistant', content: reply })
 
   return {
@@ -507,8 +588,12 @@ async function send(text, hooks = {}) {
     // 不剥的话，模型看到的「自己上一轮」结尾是 </profile> ——「看上一轮怎么收尾」
     // 这类判据就被块标签遮住了（真机问卷感的一个来源）。memgate 判定用原始文本，不受影响。
     const stripBlocks = (c) => String(c || '').replace(BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+    // D120：交接摘要只在仪式刚结束后的第一轮取走，且只在主对话轮（非 internal）。
+    // bootstrapPending 说明仪式还在，摘要没打包，别取；totalTokens 那条 buildPrompt
+    // 调用不传 handoff，就是怕在那儿把摘要误消耗掉。
+    const handoff = hooks.internal || life.bootstrapPending() ? null : life.takeRitualHandoff()
     const messages = [
-      { role: 'system', content: life.buildPrompt({ summary, recalled }) },
+      { role: 'system', content: life.buildPrompt({ summary, recalled, handoff }) },
       ...history.slice(-48).map((m) => ({ role: m.role, content: m.role === 'assistant' ? stripBlocks(m.content) : m.content }))
     ]
     if (hooks.internal) messages.push({ role: 'user', content: text })
