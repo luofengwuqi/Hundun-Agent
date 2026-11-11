@@ -136,7 +136,7 @@
 
 ```bash
 npm run build                                  # 只构建
-env -u NODE_OPTIONS node scripts/test.mjs      # 610 项
+env -u NODE_OPTIONS node scripts/test.mjs      # 797 项
 npm run check                                  # 构建 + 测试 + 产物检查
 npm run dev                                    # 构建 + 起窗口（沙箱里起不来，得他本人跑）
 ```
@@ -167,7 +167,7 @@ npm run dev                                    # 构建 + 起窗口（沙箱里�
 一条改动要同时满足这些才算完，缺哪条就在回复里说明缺哪条：
 
 1. **代码** + 对应断言。新加的测试要有断言名，说清它在验什么（断言名是给人读的，不是占位）。
-2. `env -u NODE_OPTIONS node scripts/test.mjs` **515 项全过**（或说明新增到了多少项）。
+2. `env -u NODE_OPTIONS node scripts/test.mjs` **797 项全过**（或说明新增到了多少项）。
 3. `02` 有对应的 D 条目（没有新决策就说明「无新决策」）；`05-DEV-PLAN` 里那个 P 项的状态更新。
 4. 搬了 openclaw 的东西 → 更新 `06-OPENCLAW-PORT.md`，写上提交号。
 5. 改动涉及「当前状态」→ 更新 `00-CONTEXT.md` 的「当前状态」一节（**只改那一处**，历史段落只加不改）。
