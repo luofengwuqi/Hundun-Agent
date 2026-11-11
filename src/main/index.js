@@ -513,6 +513,17 @@ function registerIpc() {
         '现在主动开口说第一句。不要复述档案，不要说「我都记住了」，' +
         '不要用「有什么想聊的」「需要我做什么」开头。' +
         '就一句话，像人坐下来会说的那句。）'
+    } else if (text === '__resume__') {
+      // D124：打开窗口时接着上次那句。**没有待办就不开口** —— 返回 skipped，
+      // 界面连一个空气泡都不会留。不做「好久不见」（D059）。
+      const todo = life.pendingTodo()
+      if (!todo) return { skipped: true }
+      internal = true
+      content =
+        '（他刚打开窗口。你手上有自己留给自己的这一句：' + todo.text + '。' +
+        '直接问这一句，像你一直在想这件事。不要说「上次」「昨天」「我一直记着」，' +
+        '不要先寒暄，不要解释你为什么问，只问这一句，问完就停。）'
+      life.markTodoAsked(todo.key)
     }
     // 这一轮属于哪个身份。切过身份之后回来，锁不能乱放（见 finally）
     const myEpoch = session.current()
@@ -576,8 +587,14 @@ function registerIpc() {
     if (!mainWindow || mainWindow.isDestroyed()) return
     store.write({ windowBounds: mainWindow.getBounds() })
     mainWindow.hide()
+    // D124：关窗 = 今天这段聊完了。补一趟日记（一天最多一趟），
+    // 明天打开时它才有「一句自己的话」可接。不 await——他关窗口不该等模型。
+    conversation.settle().catch(() => {})
   })
-  ipcMain.on('win:hide', () => mainWindow && mainWindow.hide())
+  ipcMain.on('win:hide', () => {
+    if (mainWindow) mainWindow.hide()
+    conversation.settle().catch(() => {})
+  })
 }
 
 /* ------------------------------------------------------------------ */

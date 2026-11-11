@@ -154,7 +154,10 @@ function state() {
     busy,
     // D112：界面靠它判断「仪式刚走完」——上一轮 pending 为 true、这一轮 false 就放过场。
     // 放在 state 里而不是单独开一条通道：界面本来每轮都要问一次状态，多一个字段不算事。
-    ritual: life.ritualState()
+    ritual: life.ritualState(),
+    // D124：打开窗口时有没有一句该接的话。界面据此决定让它先开口还是安静着。
+    // 仪式期一律没有——那会儿说话的是安装程序。
+    resume: life.bootstrapPending() ? null : life.pendingTodo()
   }
 }
 
@@ -674,8 +677,104 @@ async function send(text, hooks = {}) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* 关窗结算：把今天写成几句判断（D124）                                 */
+/* ------------------------------------------------------------------ */
+//
+// 为什么需要它：日记现在由**代码抄原话**（appendDiary），模型写判断那条路
+// （`<memory>` 块）在三次真实会话、约 30 轮里一条都没发生。于是明天的上下文里
+// 只有「他说过什么」，没有「这说明了什么」——它记得住句子，说不出话。
+//
+// openclaw 那边这个活是模型的工具调用顺手做的（写一次有一次回执）；
+// 我们没有工具，只能把「回执」造出来：关窗口的时候补一趟，一天最多一趟。
+//
+// 为什么挂在关窗而不是每轮：每轮补一次，一天十轮就是十次模型调用，
+// 而且十有八九在重复同一句话。他要的是「明天它还知道」，不是「实时记账」。
+
+const SETTLE_FILE = '.settle.json'
+
+function settleFile() {
+  return path.join(life.lifeDir(), SETTLE_FILE)
+}
+
+function readSettle() {
+  try {
+    return JSON.parse(fs.readFileSync(settleFile(), 'utf8')) || {}
+  } catch {
+    return {}
+  }
+}
+
+function writeSettle(o) {
+  try {
+    fs.writeFileSync(settleFile(), JSON.stringify(o), 'utf8')
+  } catch {
+    // 记不住结算到哪了 → 下次关窗再补一趟。多花一次调用，比丢一天强
+  }
+}
+
+/**
+ * 该不该结算。**纯函数**（不读配置、不看钟），测试能捏死「今天」。
+ *
+ * 三条：他说过至少两句实话（一句也可能是「嗯」）；今天还没结算过；
+ * 或者今天又聊了新的（轮次变多）。`force` 给「退出应用」那条路用。
+ */
+function settleDue({ turns, state, today, force } = {}) {
+  if (force) return true
+  const n = Number(turns) || 0
+  if (n < 2) return false
+  const s = state || {}
+  return !(s.date === today && Number(s.turns) >= n)
+}
+
+let settling = false
+
+/**
+ * 结算一次。**不抛**：这是收尾的活，失败不能影响关窗口。
+ * 走 memgate 的 `daily-unwritten` 分支 —— 那条路已经是「写判断不抄原话」的提示词，
+ * 而且落盘仍然只有 `persistNotes` 一个实现。
+ */
+async function settle({ force = false } = {}) {
+  if (settling) return null
+  const cfg = store.read()
+  if (!cfg.apiKey || !String(cfg.apiKey).trim()) return null
+
+  const today = life.dateStr()
+  const raw = life.readSafe('chat/' + today + '.md', 20000)
+  const lines = raw.split('\n').filter((l) => /^- \d{2}:\d{2} \[你\] /.test(l))
+  if (!settleDue({ turns: lines.length, state: readSettle(), today, force })) return null
+
+  // 只带他说的话（原话）。它当时怎么回的不重要，重要的是他今天说了什么。
+  const digest = lines
+    .slice(-40)
+    .map((l) => l.replace(/^- \d{2}:\d{2} \[你\] /, '- '))
+    .join('\n')
+  if (!digest.trim()) return null
+
+  settling = true
+  try {
+    const r = await gate.repair({
+      userText: digest,
+      assistantText: '（这不是一轮问答。上面是他今天说过的话，按时间排。按日记的规矩写今天的记录。）',
+      reason: 'daily-unwritten'
+    })
+    // 无论写成没写成，都把「结算到第几轮」记下来：不然每次关窗都重跑一遍，
+    // 模型每次都答 NOTHING，也照样花钱。
+    if (r && r.status !== 'error' && r.status !== 'skipped') {
+      writeSettle({ date: today, turns: lines.length })
+    }
+    return r
+  } catch {
+    return null
+  } finally {
+    settling = false
+  }
+}
+
 module.exports = {
   send,
+  settle,
+  settleDue,
   reset,
   resetSession,
   state,

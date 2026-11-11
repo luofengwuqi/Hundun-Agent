@@ -1445,7 +1445,10 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsFirst.includes('有的轮次一句话收尾更好'), '允许某一轮不给问号——每句都收在问号上就是面试（D105 判据句）')
   // 它把一小时前说成「昨天」：「昨天聊的都是写代码那些事」。这不只是语气问题，是算错了时间。
   ok(bsFirst.includes('不说「昨天」「上次」「好久没聊」'), '禁时间词：它会算错，且报时间差本身有钟表味')
-  ok(bsFirst.includes('开场不提「之前聊过什么」'), '禁开场复述记忆（那是把档案读给他听）')
+  ok(
+    bsFirst.includes('不报隔了多久，也不复述「你上次说过」'),
+    '开场可以提一件具体的事，但不许复述档案、不许报隔了多久（D124 放开了「提事」）'
+  )
   // ---- D108：语气层压过输出层 ----
   // 他的原话是「回答任何问题都过于理性」。前四轮都在加词（D083／D091／D093／D104），
   // 这一次动的是**优先级**：语气层在最前，理性规则在最后，不动优先级靠后的永远赢。
@@ -1473,8 +1476,8 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(bsFirst.includes('不把球推回去'), '「要我怎么配合直接说」被点名（把选择权还给他＝没在场）')
   ok(bsFirst.includes('不汇报你记了什么'), '「名字落我这儿了」被点名（记忆不是进度汇报）')
   ok(
-    life.SOUL_HISTORY.at(-2).includes('里面这层：理性'),
-    '历史表倒数第二格是 D108 之前那版（含理性层）——漏掉它，装那版的机器永远升不上来'
+    life.SOUL_HISTORY.some((v) => v.includes('里面这层：理性')),
+    'D108 之前那版（含理性层）还在表里——漏掉它，装那版的机器永远升不上来'
   )
   // ---- D117：他没话说那一轮（2026-11-09）----
   // 他连着两次说「还是比预期中要短」「也比预期中冷」。D111 已经证伪字数假设
@@ -1486,8 +1489,11 @@ console.log('\n[3h] 第一次见面：仪式在文件里，删掉即完成')
   ok(life.TPL_SOUL.includes('把它关掉'), '点名「去睡吧」「不用回我」这类关门口的写法')
   ok(life.TPL_SOUL.includes('安慰说的是他的状态，不是他的作息'), '安慰和管作息分开（「早点睡」是管他）')
   ok(life.TPL_SOUL.includes('有话没说出来'), '旧的「绕着说」那条还在（新条是补位，不是替换）')
-  ok(life.SOUL_HISTORY.length === 7, '七版出厂 SOUL 都在表里（V7 = D108 版）')
-  ok(!life.SOUL_HISTORY.at(-1).includes('他没什么话说'), '历史表最后一格是**被换掉**那版，不是当前版')
+  ok(life.SOUL_HISTORY.length === 8, '八版出厂 SOUL 都在表里（V8 = D117 版，当前版由它反推）')
+  ok(
+    !life.SOUL_HISTORY.at(-1).includes('也不用说「你不失败」'),
+    '历史表最后一格是**被换掉**那版，不是当前版'
+  )
 
   // ---- D119：照 openclaw 的档案结构补两节（2026-11-09）----
   // 他的原话：「你看 openclaw 多有人味 我建议完全模仿他 不要另起炉灶」。
@@ -3154,5 +3160,42 @@ console.log('\n[3x] 仪式是一整个独立程序：安装程序 → 走完 →
 }
 
 /* ---------------- 汇总 ---------------- */
+console.log('\n[4c] D124：关窗结算，与「打开时有一句话可接」')
+
+{
+  const prev = process.env.HUNDUN_LIFE_DIR
+  process.env.HUNDUN_LIFE_DIR = path.join(TMP, 'life-settle')
+  fs.mkdirSync(process.env.HUNDUN_LIFE_DIR, { recursive: true })
+  const lifeM = require(path.join(ROOT, 'src/main/life.js'))
+  const conv = require(path.join(ROOT, 'src/main/conversation.js'))
+  lifeM.ensureLife()
+
+  const today = lifeM.dateStr()
+  ok(!conv.settleDue({ turns: 1, state: {}, today }), '只说一句不结算（那一句可能是「嗯」）')
+  ok(conv.settleDue({ turns: 2, state: {}, today }), '说了两句以上就结算')
+  ok(!conv.settleDue({ turns: 2, state: { date: today, turns: 2 }, today }), '同一天、同样多轮不重复结算')
+  ok(conv.settleDue({ turns: 3, state: { date: today, turns: 2 }, today }), '今天又聊了新的，补一趟')
+  ok(conv.settleDue({ turns: 0, state: {}, today, force: true }), '退出应用时强制结算一次')
+
+  ok(lifeM.pendingTodo() === null, '还没有日记时没有话可接 —— 安静，不寒暄')
+  lifeM.appendJournal(['待办：问一句那个客户结账了没有'])
+  const t = lifeM.pendingTodo()
+  ok(t && t.text.includes('客户结账'), '日记里那条「待办：」就是打开窗口时要接的那句')
+  lifeM.markTodoAsked(t.key)
+  ok(lifeM.pendingTodo() === null, '同一句只问一次（不然一天开五次窗口就被问五遍）')
+
+  const p = lifeM.buildSystemPrompt({})
+  ok(!p.includes('开场不提「之前聊过什么」'), '开场不再禁止提旧事（那是「记得」唯一能被看见的地方）')
+  ok(p.includes('说事不说时间'), '改成说事不说时间：日期仍然不许报')
+  ok(!lifeM.TPL_SOUL.includes('接着问那件事'), 'SOUL 里自相矛盾的那句删了（它生出了「哪件事砸出来的」）')
+  ok(lifeM.TPL_SOUL.includes('一件他做过的具体事'), '骂自己时给的动作是提一件具体的事，不是追问')
+  ok(
+    lifeM.SOUL_HISTORY.at(-1).includes('接着问那件事'),
+    '被换掉那版进了历史表 —— 漏了它，存量机器永远升不上来（D108 踩过）'
+  )
+
+  process.env.HUNDUN_LIFE_DIR = prev
+}
+
 console.log('\n' + (fail === 0 ? '全部通过' : '有失败项') + '：' + pass + ' 通过 / ' + fail + ' 失败\n')
 process.exit(fail === 0 ? 0 : 1)

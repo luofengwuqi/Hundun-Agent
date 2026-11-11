@@ -317,6 +317,27 @@ async function opening() {
   }
 }
 
+/**
+ * D124：打开窗口时，接着上次那句。
+ *
+ * 只有一件事会触发它：昨天的日记里还留着一条「待办」。没有就什么都不做——
+ * 空手寒暄一句「早上好」比不说话更冷（D059 连「好久不见」都禁了）。
+ */
+async function resume() {
+  streaming.value = true
+  liveIdx.value = -1
+  startLive()
+  try {
+    const res = await window.hundun.chat.send('__resume__')
+    if (res && res.text) finalize(res.text)
+    else finalize('')
+  } catch {
+    finalize('')
+  } finally {
+    streaming.value = false
+  }
+}
+
 /* ---------- 仪式过场（D112） ---------- */
 
 let ceremonySeq = 0
@@ -497,6 +518,8 @@ onMounted(async () => {
         ritual: ritualPending.value && m.role !== 'user'
       }))
       scrollBottom()
+      // D124：昨天留了一句没问的话，就让它先开口；没有就安静等他先说
+      if (st.resume) resume()
     } else {
       opening()
     }
